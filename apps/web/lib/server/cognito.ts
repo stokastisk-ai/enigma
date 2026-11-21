@@ -162,13 +162,14 @@ export async function verifyAccessToken(token: string, c: CognitoConfig, f: Fetc
 }
 
 // ------------------------------------------------------------------ CSRF: state-changing requests must be same-origin
-export function sameOrigin(originHeader: string | null, hostHeader: string | null, forwardedHost?: string | null, publicHost?: string | null): boolean {
+export function sameOrigin(originHeader: string | null, hostHeader: string | null, publicHost?: string | null): boolean {
   if (!originHeader) return false; // browsers always send Origin on cross-site and same-site POSTs; absence means a non-browser or stripped request
   try {
     const o = new URL(originHeader);
-    // publicHost (ENIGMA_PUBLIC_HOST) is the operator-configured public hostname. Behind CloudFront -> Lambda Function URL the Host header the app
-    // sees is the Function URL's, so the browser's Origin would never match it; an explicit allow-list entry is safer than trusting forwarded headers.
-    const hosts = [hostHeader, forwardedHost, publicHost].filter(Boolean) as string[];
+    // Allowed: the request's own Host, plus publicHost (ENIGMA_PUBLIC_HOST), the operator-configured public hostname. Behind CloudFront -> Lambda
+    // Function URL the Host the app sees is the Function URL's, so the browser's Origin never matches it; an explicit allow-list entry is used instead.
+    // X-Forwarded-Host is deliberately NOT trusted: it is client-controlled unless a trusted proxy overwrites it.
+    const hosts = [hostHeader, publicHost].filter(Boolean) as string[];
     return hosts.includes(o.host);
   } catch {
     return false;

@@ -82,3 +82,17 @@ Interpreter `/usr/local/bin/python3.13`; local GPU guard active (`ENIGMA_FORBID_
 | `tests/sql/run_aws_sql_tests.py` / `run_sql_tests.py` | 61 / 78 checks passed |
 | `npm run lint`, `typecheck`, `test:unit` (15, incl. new public-host CSRF cases), `test:e2e` | clean; 15 pass; 10 passed |
 Evidence limits: pinned-JWKS and CSRF/public-host logic are proven with local keys and unit cases only. Behaviour behind real CloudFront/Lambda Function URL/Web Adapter, cookie pass-through and cold-start latency are **NOT RUN**. Cost figures are model outputs from list prices, not billing data.
+
+
+---
+## Kaggle-only / Track B run (2026-11-21, after commit fd3f759)
+Interpreter `/usr/local/bin/python3.13`. Local GPU never touched: GPU libraries and `nvidia-smi` blocked, `ENIGMA_FORBID_LOCAL_GPU=1`, and a session-wide guard refuses every non-loopback socket (so no test can reach AWS). No AWS resource created or modified; AWS API calls this session were limited to the caller-identity check.
+| Command | Result |
+|---|---|
+| `/usr/local/bin/python3.13 -m pytest` | **317 passed, 6 skipped** (5 opt-in live Clerk + 1 remote-only GPU). Previous reported: 184 / 6 |
+| `scripts/smoke_e2e.py` | SMOKE OK (synthetic) |
+| `tests/sql/run_aws_sql_tests.py` / `run_sql_tests.py` | 61 / 78 checks passed |
+| `npm run lint`, `typecheck`, `test:unit` (15), `npm audit --omit=dev`, `test:e2e` | clean; 15 pass; 0 vulnerabilities; 10 passed |
+New coverage: `tests/api/test_dynamodb_store.py` (DynamoDB parity gate on **moto**, incl. the whole existing API suite, 8-thread claim race, concurrent ordered events, caps under a race, idempotent submit, failure injection, retention, durability, isolation, row-shape parity, no-GSI/consistent-read assertions); `tests/test_no_aws_gpu.py` (no AWS GPU/hosted-AI/CUDA-in-Lambda anywhere, with self-tests of the detectors); `tests/test_network_guard.py`; Cognito JWKS rotation tests (+9); claim-poll pacing tests (simulated clock) in `tests/connector/test_pacing.py`.
+Manual live check (real Next server + fake Cognito IDP + curl, no AWS): CloudFront-style Origin via a Function-URL `Host` accepted; evil Origin 403; a spoofed `X-Forwarded-Host` bypass was found, fixed (header no longer trusted) and re-verified; sign-in redirect stays on `ENIGMA_PUBLIC_ORIGIN`.
+**Evidence limits (NOT RUN):** real DynamoDB/RDS/Cognito/Lambda/CloudFront/Amplify; Lambda Web Adapter for Next 16; Kaggle 2×T4 acceptance (notebook updated, to be run by you); browser → AWS → Kaggle end-to-end. moto is an emulator: no real throttling, partition or transaction-timing behaviour. Pacing latency figures are from a deterministic simulation, not measured network latency.

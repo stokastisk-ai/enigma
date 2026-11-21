@@ -444,3 +444,66 @@ Snapshot screenshot 788.9 MiB is **local directory**, not GitHub repository size
 ## 15.7 Final report contract
 
 For each run provide: (1) exact local Python interpreter and no-local-GPU assurance; (2) real baseline vs updated test counts; (3) exact Git files created/modified/deleted and remote visibility/commit verification; (4) AWS resources **created** (usually NONE until approved), region, price and limits, endpoint status; (5) Kaggle real GPU status (NOT RUN unless remotely evidenced); (6) unresolved blockers; (7) safe disk cleanups and what was preserved. Do not claim full AWS deployment if only adapters/IaC are implemented.
+
+
+---
+
+# 16. GPU COMPUTE POLICY — KAGGLE DUAL-T4 ONLY (LATEST AND HIGHEST PRECEDENCE)
+
+Effective 2026-11-21. **Section 16 overrides any contradictory instruction in Sections 1–15 or any earlier Claude prompt.** All prior sections remain for historical context, but their mentions of AWS GPU, optional alternate GPU hosts, local 940M tests, or automatic GPU provision are superseded. Claude must read this section on every session through `CLAUDE.md`.
+
+## 16.1 Strict compute boundary
+
+**The only authorized GPU inference environment, for now, is a user-started Kaggle notebook with precisely 2 × NVIDIA Tesla T4 GPUs (SM75), running the released Stokastisk 0.1.0 build-5 Python SDK and its built-in vLLM 0.25.1, CUDA 13 SM75 binaries and TRITON_ATTN backend.** No alternate GPU host is automatically authorized; a future host requires a distinct explicit owner decision and changed instructions.
+
+- **FORBIDDEN on AWS:** EC2 GPU instance families (including P, G, DL, Trn, Inf and any accelerator-bearing instances); EC2 NVIDIA GPU instances; SageMaker GPU endpoints/training; EKS/ECS/Fargate GPU nodes; AWS Batch GPU; AWS Bedrock, GPU inference as a service, GPU marketplace or rented third-party compute; NVIDIA GPU AMIs, CUDA devices, models/weights on AWS for inference; provisioning any GPU resource, even if credits may pay for it. Do not suggest these as default alternatives or create cost estimates that imply approval. The user wants no AWS GPU spending at all, not even with credits. An AWS CPU-only Lambda / non-GPU compute component is allowed only for web/API/control-plane tasks, subject to cost approval.
+- **FORBIDDEN on local Ubuntu:** running/probing the GeForce 940M, `nvidia-smi`, initializing NVML, `torch.cuda`, CUDA/vLLM inference, GPU driver or toolkit operations, physical GPU benchmark. All local telemetry tests must use mocks and must be audited before execution. Never install or rebuild Stokastisk GPU wheel/CUDA dependencies on this laptop. Use `/usr/local/bin/python3.13` for every local Python command, including pip and pytest. No `uv`, `ruff`, `venv`, Poetry, Conda or Go.
+- **ALLOWED Kaggle only after user launch/terms verification:** verify two genuine T4s (not merely mock device names), Python compatibility, SHA256-pinned SDK build-5 installation, Qwen2.5-0.5B TP=1 initial serving, `/health`, `/v1/chat/completions`, native `/metrics`, `nvidia-ml-py` per-device measures, `prometheus_client` metric parsing, emitted chunks, shutdown, and disconnect. Test larger models/TP=2 separately and label unverified results. Never promise persistent GPU uptime or use Kaggle free compute as a paid commercial production backend without explicit provider permission.
+
+## 16.2 Allowed AWS role: CONTROL PLANE ONLY
+
+AWS may host (only after explicit, itemized billing approval) Enigma's Next.js 16/shadcn/Recharts UI, FastAPI Python 3.13 control API, Cognito identity, durable jobs/events/metrics, data storage, static asset delivery and operational logs. **AWS must never generate LLM tokens**. The complete live data flow is:
+
+1. Signed-in browser submits prompt to authenticated AWS control-plane API; backend verifies user, tenant and quotas, persists a bounded inference job.
+2. Kaggle-hosted Stokastisk connector **initiates outbound HTTPS** to claim jobs with scoped, revocable runtime authentication; no inbound Kaggle port, no public vLLM server, no tunnel required.
+3. Kaggle vLLM generates model responses; connector posts ordered `event_seq` response chunks and measured GPU0/GPU1 + vLLM metrics. The browser receives incrementally through authenticated bounded polling (or a separately cost-approved transport).
+4. AWS persists final assistant message ONCE and historical telemetry; after Kaggle closes, runtime is OFFLINE and chat requests are not silently rerouted to AWS GPUs or paid hosted models.
+5. Maintain idempotent claims, expiring leases, replay/resume, retries, cancellation, bounded local spool, encryption, event retention, rate limits, upload budgets and cross-tenant authorization.
+
+Do not introduce AWS Bedrock, proprietary LLM API, Gemini or OpenAI API as a hidden chat fallback. Do not place Stokastisk inference artifacts in an AWS Lambda ZIP/image or install `torch`, `vllm`, CUDA wheels, or `pynvml` there. The AWS side may **store** measurements but GPU observability instrumentation is **only** `nvidia-ml-py`, `prometheus_client` and built-in vLLM metrics on Kaggle.
+
+## 16.3 Latest reported project checkpoint — verify, never assume
+
+From owner's latest Claude CLI transcript (not independently re-executed in this instruction file): latest private Enigma `main` commit `fd3f759`, following `4916f44`, reportedly synchronized; 184 Python tests passed, 6 skipped; smoke succeeded; SQL suites 61 and 78 assertions; 15 Node unit tests; 10 browser tests; lint/typecheck clean. No AWS resources changed, real AWS/Kaggle integration NOT tested. The source of truth is the current Git remote and fresh test results, not this checkpoint. Normal reviewed non-destructive pushes to `stokastisk-ai/enigma` are authorized; preserve private visibility, no force pushes, never modify public SDK/docs repos under this authorization. Untracked owner files must not be deleted, staged or overwritten without inspection.
+
+The AWS CLI reportedly uses **ROOT access keys**, with MFA enabled. This is a serious security issue: do not use root for deployment/automation, do not create or rotate keys in unattended code, and do not remove existing credentials until a tested non-root admin/deployer access path is established and owner explicitly authorizes the security change. Prepare a least-privilege IAM role / IAM Identity Center plan and owner-facing key-rotation checklist. Read-only account investigation should prefer a non-root profile; if only root access exists, stop cloud operations requiring it and report. Never output credential values or account IDs into project Git, logs or chat.
+
+The AWS account was reported PAID with $99.99 promotional credits; exact credit expiry and Free Tier allowance applicability remain UNVERIFIED. **No pricing model can guarantee $0 spending**. Latest Claude's stated *unverified* `us-east-1` monthly scenarios: RDS Track A $14.21 / $15.51 / $19.48 and DynamoDB Track B $0.37 / $2.40 / $7.44 (low/moderate/high). These are assumptions, not invoices or authorization. No provisioning or AWS billable changes without account-specific plan/credit expiry, region, exact resource list, itemized dependency costs, cleanup plan, explicit user approval and defined ceiling. An alert is not a hard spend cap.
+
+## 16.4 Development decisions and cost controls
+
+- **Priority: build and test Track B DynamoDB parity offline** to reduce fixed RDS costs while retaining the existing PostgreSQL implementation until parity is proven. Allowed to install *only vetted pinned* development dependencies (`boto3`, `moto` or DynamoDB Local if genuinely needed) with `/usr/local/bin/python3.13 -m pip`, but DynamoDB Local is a Java application, not a pip package; verify provenance, size and cleanup before any download. No AWS resource writes for local tests. Prove tenant isolation, strong/conditional atomic claims, lease expiry, ordered event replay, deduplication/idempotency, quotas, retention and cancellation with failure injection. Do not announce migration as complete based only on unit tests.
+- CloudFront vs direct Function URL, 1-second vs 5-second idle connector polling, Lambda memory/duration, CloudWatch log retention and Cognito cost must be backed by actual traffic calculations. The reported 5-second idle interval may reduce traffic but adds pickup latency; make configurable with fast poll while an active prompt awaits, jitter/backoff when idle and bounded API use. Require test measurements before publishing latency claims.
+- Next.js 16 web tier: evaluate Lambda Web Adapter for Node.js (ARM64 only after confirming native dependency compatibility), CloudFront host/origin handling, redirects, cookies, caching, SSR/static routes and streaming; no silent Next.js 15 downgrade. AWS Lambda Web Functions is separate from Python FastAPI and may have different limits. Check official docs and live tests when deployment is approved.
+- Authentication/security: audit `COGNITO_JWKS_JSON` pinning against key rotation/revocation and fail-closed behavior. Do not bake long-lived JWKS into publicly accessible Next.js code. Prefer normal cached JWKS retrieval from permitted network locations or a documented safely maintained rotation process; assess VPC/NAT costs before choosing. Test CloudFront host-header forwarding and allowed public origin; never trust arbitrary forwarded headers.
+- Keep only necessary source and IaC, no copied GPU dependencies, no 788MB `node_modules` upload. Preserve `.git`, source, lockfiles, migrations, tests, docs, pending user files and all Git history. Clean only positively identified generated artifacts after reviewed inspection. Never indiscriminately delete remote repository files; push reviewed diffs after secret scan.
+
+## 16.5 Required work in each Claude session
+
+1. Read `CLAUDE.md`, full `skills.md` including Section 16, skill and new prompt, current git status, AWS migration docs, source and tests. Confirm `/usr/local/bin/python3.13` path, root/non-root AWS identity and **no local GPU access**.
+2. Audit current code for forbidden AWS/local GPU pathways, GPU EC2/SageMaker/Bedrock provision references, GPU dependencies in Lambda packages and hidden fallback model APIs. Remove proposed GPU infrastructure from plans/IaC only after inspection; preserve historical evidence files.
+3. Run safe CPU-only tests and actual Next.js lint/typecheck/build/browser tests; label AWS-live and remote Kaggle checks NOT RUN if so. Keep the 184-pass/6-skip count as prior report, not a promise.
+4. Complete DynamoDB adapter parity tests locally, tighten AWS web/API routing, develop explicit resource inventory + cost scenarios with sourced official pricing and a zero-spend assessment. Do not deploy before explicit authorization.
+5. After secret scan, push only reviewed needed Enigma source/docs/tests/IaC to existing private repo; verify remote private and SHA. Do not change Stokastisk or docs repos.
+6. Prepare authorized Kaggle notebook with remotely executable checks; do not run it locally. Final report: exact AWS resources created (normally none), Git commit SHA, code tests, AWS plan/credit unknowns, GPU location Kaggle ONLY, root-key remediation, remaining blockers, and whether real E2E has been proven.
+
+**Completion criterion:** Real-time chat + measured observability must be tested with a user-started Kaggle 2×T4 session and the verified AWS control plane, and **no AWS GPU of any kind**. Until then, `AWS_DEPLOYED` and `KAGGLE_E2E` statuses remain BLOCKED or NOT RUN, never DONE by inference.
+
+
+## 16.6 Lessons recorded 2026-11-21 (implementation notes, subordinate to 16.1-16.5)
+- **Track B built and emulator-parity-tested**; PostgreSQL retained. Real-table parity is still required before calling it equivalent. moto's `TransactWriteItems` is not thread-safe: serialise individual client calls in race tests (this models DynamoDB's per-call atomicity), and never read emulator results as production evidence.
+- **Never trust `X-Forwarded-Host`.** A live check found a CSRF bypass through it; the allow-list is the request `Host` plus the operator-set `ENIGMA_PUBLIC_HOST`. Behind CloudFront → Function URL the origin sees the Function URL host, so `ENIGMA_PUBLIC_HOST`/`ENIGMA_PUBLIC_ORIGIN` are required.
+- **JWKS:** cached fetch with throttled refresh and retirement is the default (16.4); `COGNITO_JWKS_JSON` is only an offline seed for a NAT-less VPC Lambda (Track A). Track B needs no VPC.
+- **Idle claim back-off** exists but is **off by default**: it saves under USD 0.4/month and costs up to the idle ceiling in pickup latency.
+- **Tests must not reach the network**, local GPU or AWS: enforced by `tests/conftest.py` (GPU import/`nvidia-smi` blocker + loopback-only sockets) and `tests/test_no_aws_gpu.py`.
+- Only root AWS credentials exist; the deny-by-policy deployer in `docs/AWS_ROOT_KEY_REMEDIATION.md` makes the no-GPU rule technically enforceable once a non-root identity exists.

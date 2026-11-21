@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Enigma Track B data store (DynamoDB) — REVIEW DRAFT. NOT DEPLOYED. Creating this stack is a billable action and needs the owner's explicit
+  itemized approval (docs/AWS_DEPLOYMENT.md). CPU-less, GPU-less: this is only the control-plane database; all inference runs on the user's
+  Kaggle 2x T4 session. No GSI by design (the store uses strongly consistent reads only).
+Parameters:
+  Environment: { Type: String, Default: dev, AllowedValues: [dev] }
+  TableName: { Type: String, Default: enigma-dev, AllowedPattern: "^[a-zA-Z0-9_.-]{3,255}$" }
+  BillingMode:
+    Type: String
+    Default: PAY_PER_REQUEST
+    AllowedValues: [PAY_PER_REQUEST, PROVISIONED]
+    Description: PROVISIONED uses the 25 RCU / 25 WCU monthly free tier (account applicability unverified); PAY_PER_REQUEST has no free capacity units.
+  ReadCapacity: { Type: Number, Default: 25, MinValue: 1, MaxValue: 25 }
+  WriteCapacity: { Type: Number, Default: 25, MinValue: 1, MaxValue: 25 }
+Conditions:
+  IsProvisioned: !Equals [!Ref BillingMode, PROVISIONED]
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete            # dev only; set Retain before holding anything you cannot rebuild
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: !Ref BillingMode
+      ProvisionedThroughput: !If [IsProvisioned, { ReadCapacityUnits: !Ref ReadCapacity, WriteCapacityUnits: !Ref WriteCapacity }, !Ref "AWS::NoValue"]
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }          # events 48 h, telemetry 14 d, batch markers 2 d (set by the store)
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: false }  # PITR bills $0.20/GB-mo; enable only if you need it
+      SSESpecification: { SSEEnabled: false }                                   # false = default AWS-owned key encryption at rest (no KMS charge)
+      DeletionProtectionEnabled: false
+      Tags: [{ Key: Project, Value: Enigma }, { Key: Environment, Value: !Ref Environment }]
+  ApiAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Least-privilege data-plane access for the Enigma API Lambda (one table, no schema operations, audit rows append-only).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DataPlaneOnThisTable
+            Effect: Allow
+            Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Query, dynamodb:BatchGetItem, dynamodb:BatchWriteItem, dynamodb:ConditionCheckItem, dynamodb:Scan]
+            Resource: !GetAtt Table.Arn
+          - Sid: AuditRowsAreAppendOnly
+            Effect: Deny
+            Action: [dynamodb:UpdateItem, dynamodb:DeleteItem]
+            Resource: !GetAtt Table.Arn
+            Condition: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["AUDIT#*"] } }
+Outputs:
+  TableName: { Value: !Ref Table }
+  ApiAccessPolicyArn: { Value: !Ref ApiAccessPolicy }

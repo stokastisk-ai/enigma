@@ -43,3 +43,12 @@ def test_connector_polling_dominates_api_volume_and_backoff_cuts_it():
     assert base["kaggle_req"] > base["bff_req"]                      # the connector is the biggest API consumer at the default 1 s claim poll
     assert tuned["kaggle_req"] < base["kaggle_req"] * 0.4            # a 5 s idle claim poll removes most of it
     assert tuned["api_invocations"] < base["api_invocations"] * 0.65  # browser polling (unchanged) is the remainder
+
+
+def test_idle_backoff_scenario_lowers_api_volume_and_cost_but_not_the_rds_floor():
+    for name, c in m.tuned_comparison().items():
+        assert c["api_invocations"][1] < c["api_invocations"][0]
+        assert c["track_b"][1] <= c["track_b"][0] and c["track_a"][1] <= c["track_a"][0]
+    low = m.tuned_comparison()["low"]
+    assert low["track_a"][1] > 13.98                                   # the fixed RDS charge is untouched by polling
+    assert m.claims_per_h({**m.A, "claim_idle_s": None}) == 3600.0 and m.claims_per_h({**m.A, "claim_idle_s": 5.0}) < 1100

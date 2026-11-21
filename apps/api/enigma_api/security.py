@@ -93,23 +93,75 @@ class UserIdentity:
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
 
 
+class JwksCache:
+    """Cognito signing keys with safe rotation.
+
+    * Normal mode: keys are fetched from the pool's own public JWKS URL (HTTPS, short timeout) on first use, then cached.
+    * An unknown ``kid`` triggers ONE refresh attempt, throttled to once per ``min_refresh_s`` (a flood of forged ``kid`` values cannot hammer
+      the JWKS endpoint or add latency to every request). Cognito's published key set replaces the cache, so a key Cognito retired is dropped
+      at the next successful refresh (a known ``kid`` also triggers a refresh once the cache is older than ``ttl_s``).
+    * Optional pinned seed (``COGNITO_JWKS_JSON``) lets a VPC Lambda with no outbound network verify tokens offline. If the network is reachable it
+      is replaced by the fetched set; if not, the pinned keys stay and an unknown ``kid`` is refused (fail closed) until the operator updates them.
+    * A failed refresh never widens trust: existing keys are kept, unknown kids still fail.
+    Not a secret: JWKS documents contain public keys only.
+    """
+
+    def __init__(self, url: str, pinned_json: str = "", fetch: Callable[[str], dict] | None = None, clock: Callable[[], float] | None = None,
+                 min_refresh_s: float = 300.0, ttl_s: float = 3600.0):
+        import time as _t
+        self.url, self._fetch, self._clock = url, fetch or self._default_fetch, clock or _t.monotonic
+        self.min_refresh_s, self.ttl_s = min_refresh_s, ttl_s
+        self._keys: dict[str, Any] = {}
+        self._last_attempt: float | None = None
+        self._last_success: float | None = None
+        self.fetches = 0                                                  # observable for tests / diagnostics
+        if pinned_json:
+            import json
+            self._load(json.loads(pinned_json))
+
+    @staticmethod
+    def _default_fetch(url: str) -> dict:
+        import json
+        import urllib.request
+        if not url.startswith("https://"):
+            raise OSError("JWKS URL must be https")
+        with urllib.request.urlopen(url, timeout=2.0) as r:               # noqa: S310  (https enforced above; URL built from validated settings)
+            return json.loads(r.read(262144))
+
+    def _load(self, doc: dict) -> dict[str, Any]:
+        out = {k.key_id: k.key for k in jwt.PyJWKSet.from_dict(doc).keys if k.key_id}
+        if not out:
+            raise ValueError("empty JWKS")
+        self._keys = out
+        return out
+
+    def _refresh(self, now: float) -> None:
+        self._last_attempt = now
+        self.fetches += 1
+        try:
+            self._load(self._fetch(self.url))
+            self._last_success = now
+        except Exception:                                                 # noqa: BLE001  network/parse failure: keep what we have, stay fail-closed
+            pass
+
+    def key_for(self, kid: str | None) -> Any:
+        now = self._clock()
+        stale = self._last_success is not None and now - self._last_success >= self.ttl_s
+        if (kid not in self._keys or stale) and self.url and (self._last_attempt is None or now - self._last_attempt >= self.min_refresh_s):
+            self._refresh(now)
+        if kid in self._keys:
+            return self._keys[kid]
+        raise jwt.PyJWTError("unknown signing key id")
+
+
 class UserVerifier:
-    def __init__(self, settings: Settings, key_resolver: KeyResolver | None = None):
+    def __init__(self, settings: Settings, key_resolver: KeyResolver | None = None, jwks_fetch: Callable[[str], dict] | None = None,
+                 clock: Callable[[], float] | None = None):
         self.s = settings
         self._resolver = key_resolver
         self._jwk_client: jwt.PyJWKClient | None = None
-        self._pinned: Any = None
-
-    def _pinned_key(self, token: str) -> Any:
-        """Key from the operator-pinned JWKS (no network). Unknown `kid` => PyJWKSetError => 401 (fail closed)."""
-        if self._pinned is None:
-            import json
-            self._pinned = jwt.PyJWKSet.from_dict(json.loads(self.s.cognito_jwks_json))
-        kid = jwt.get_unverified_header(token).get("kid")
-        for k in self._pinned.keys:
-            if k.key_id == kid:
-                return k.key
-        raise jwt.PyJWTError("unknown kid")
+        self._jwks_fetch, self._clock = jwks_fetch, clock
+        self._cognito_keys: JwksCache | None = None
 
     def _verify_cognito(self, token: str) -> "UserIdentity":
         """Cognito user-pool JWT: RS256, issuer pinned to the pool, expiry, ``token_use`` and app-client binding all enforced.
@@ -123,12 +175,10 @@ class UserVerifier:
             raise unauthorized
         if self._resolver:
             key = self._resolver(token)
-        elif s.cognito_jwks_json:
-            key = self._pinned_key(token)
         else:
-            if not self._jwk_client:
-                self._jwk_client = jwt.PyJWKClient(s.cognito_jwks_url, cache_keys=True, lifespan=3600, timeout=5)
-            key = self._jwk_client.get_signing_key_from_jwt(token).key
+            if self._cognito_keys is None:
+                self._cognito_keys = JwksCache(s.cognito_jwks_url, s.cognito_jwks_json, self._jwks_fetch, self._clock)
+            key = self._cognito_keys.key_for(jwt.get_unverified_header(token).get("kid"))
         claims = jwt.decode(token, key, algorithms=["RS256"], issuer=s.cognito_issuer,
                             options={"require": ["exp", "iat", "sub", "iss"], "verify_aud": False})
         if claims.get("token_use") != s.cognito_token_use:

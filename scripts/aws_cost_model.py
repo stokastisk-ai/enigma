@@ -32,6 +32,7 @@ FREE = {"lambda_req": 1_000_000, "lambda_gbs": 400_000, "cf_req": 10_000_000, "c
 # ---------------------------------------------------------------------------------------------------- assumptions (all editable)
 A = {
     "claim_poll_s": 1.0, "heartbeat_s": 10.0, "upload_s": 5.0,        # connector defaults (connector/enigma_connector/config.py)
+    "claim_idle_s": None, "hot_fraction": 0.1,                         # idle back-off (connector claim_poll_idle_s): None = off; share of Kaggle time inside the 30 s hot window
     "dash_hooks": 3, "dash_poll_s": 5.0,                              # overview + gpu + vllm hooks (apps/web/components/enigma/use-metrics.ts)
     "chat_poll_s": 0.4,                                               # use-chat.ts POLL_FAST while a reply streams
     "api_mem_gb": 0.5, "api_ms": 50.0,                                # FastAPI+psycopg, short SQL call (ASSUMPTION; measure before approval)
@@ -49,8 +50,16 @@ WORKLOADS = {
 }
 
 
+def claims_per_h(a: dict) -> float:
+    """Claim polls per Kaggle hour: fast while 'hot', ramped to the idle ceiling otherwise (ramp transient ignored; < 1 minute of each idle spell)."""
+    fast = 3600 / a["claim_poll_s"]
+    if not a.get("claim_idle_s"):
+        return fast
+    return a["hot_fraction"] * fast + (1 - a["hot_fraction"]) * 3600 / max(a["claim_idle_s"], a["claim_poll_s"])
+
+
 def volumes(w: dict, a: dict = A) -> dict:
-    kaggle_req_h = 3600 / a["claim_poll_s"] + 3600 / a["heartbeat_s"] + 3600 / a["upload_s"]
+    kaggle_req_h = claims_per_h(a) + 3600 / a["heartbeat_s"] + 3600 / a["upload_s"]
     kaggle = w["kaggle_h"] * kaggle_req_h
     bff = w["dash_h"] * a["dash_hooks"] * 3600 / a["dash_poll_s"] + w["chat_h"] * 3600 / a["chat_poll_s"]
     pv = w["page_views"]
@@ -102,7 +111,7 @@ def estimate(w: dict, free: bool, a: dict = A) -> dict:
     net_a = 0.0
     # ---- Track B: DynamoDB (design only; NOT implemented)
     wru = w["kaggle_h"] * (3600 / a["upload_s"] * a["ddb_wru_per_telemetry_batch"] + 3600 / a["heartbeat_s"]) + w["chat_h"] * a["ddb_wru_per_chat_h"]
-    rru = w["kaggle_h"] * 3600 / a["claim_poll_s"] * a["ddb_rru_per_claim"] + (w["dash_h"] * a["dash_hooks"] * 3600 / a["dash_poll_s"]) * a["ddb_rru_per_dash_req"]
+    rru = w["kaggle_h"] * claims_per_h(a) * a["ddb_rru_per_claim"] + (w["dash_h"] * a["dash_hooks"] * 3600 / a["dash_poll_s"]) * a["ddb_rru_per_dash_req"]
     ddb_ondemand = wru / 1e6 * P["ddb_wru_per_m"] + rru / 1e6 * P["ddb_rru_per_m"]
     peak_rcu = a["dash_hooks"] / a["dash_poll_s"] * a["ddb_rru_per_dash_req"]                 # sustained RCU/s while one dashboard is open
     ddb_prov = 0.0 if (peak_rcu <= FREE["ddb_rcu"] and free) else ddb_ondemand
@@ -128,6 +137,18 @@ def webfn_alternative(w: dict, a: dict = A) -> dict:
     return {"requests": round(reqs / 1e6 * P["webfn_req_per_m"], 2), "active_cpu": round(cpu_s * P["webfn_vcpu_s"], 2),
             "memory_while_alive": round(mem_s * P["webfn_gb_s"], 2),
             "total": round(reqs / 1e6 * P["webfn_req_per_m"] + cpu_s * P["webfn_vcpu_s"] + mem_s * P["webfn_gb_s"], 2)}
+
+
+TUNED = {**A, "claim_idle_s": 5.0}
+
+
+def tuned_comparison() -> dict:
+    out = {}
+    for n, w in WORKLOADS.items():
+        b, t = estimate(w, False), estimate(w, False, TUNED)
+        out[n] = {"api_invocations": (volumes(w)["api_invocations"], volumes(w, TUNED)["api_invocations"]),
+                  "track_a": (b["track_a"]["total"], t["track_a"]["total"]), "track_b": (b["track_b"]["total"], t["track_b"]["total"])}
+    return out
 
 
 def run() -> dict:
@@ -157,6 +178,11 @@ def markdown() -> str:
         out.append(f"| **Track B total** | **{x['list']['track_b']['total']:.2f}** | **{x['free']['track_b']['total']:.2f}** |")
         wf = x["webfn_alt"]
         out.append(f"| Alternative web tier on Lambda Web Functions (replaces the Web Lambda line; list) | {wf['total']:.2f} (req {wf['requests']:.2f} + CPU {wf['active_cpu']:.2f} + mem {wf['memory_while_alive']:.2f}) | n/a |")
+    out.append("\n**Effect of the idle claim back-off** (`claim_poll_idle_s = 5`, 10 % of Kaggle time inside the 30 s hot window; LIST prices)\n")
+    out.append("| Workload | API invocations: default → tuned | Track A total: default → tuned | Track B total: default → tuned |")
+    out.append("|---|---:|---:|---:|")
+    for n, c in tuned_comparison().items():
+        out.append(f"| {n} | {c['api_invocations'][0]:,.0f} → {c['api_invocations'][1]:,.0f} | {c['track_a'][0]:.2f} → {c['track_a'][1]:.2f} | {c['track_b'][0]:.2f} → {c['track_b'][1]:.2f} |")
     return "\n".join(out)
 
 

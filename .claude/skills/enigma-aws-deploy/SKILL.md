@@ -1,12 +1,12 @@
 ---
 name: enigma-aws-deploy
-description: Audit and migrate the existing private Enigma Next.js/FastAPI observability SaaS to AWS without local GPU use or unapproved AWS charges, while preserving Python 3.13 and private Git history.
+description: Continue the existing proprietary Enigma AWS control-plane migration while keeping all GPU inference exclusively on Kaggle 2x Tesla T4, protecting private Git, Python 3.13 rules, and AWS cost gates.
 ---
 
-# Enigma AWS deployment skill
+# Enigma — AWS control plane, Kaggle GPUs only
 
-Read `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/skills.md` Section 15 in full, plus `CLAUDE.md`, `CLAUDE_CLI_AWS_FINAL_PROMPT.md`, current source, docs, tests, Git changes, and AWS cost matrix.
+Read root `CLAUDE.md`, the entire `skills.md` (**Section 16 highest precedence**), `CLAUDE_CLI_KAGGLE_ONLY_PROMPT.md`, existing AWS cost/security/architecture/deployment documents, and relevant source. Do not rebuild the application.
 
-**Hard stop:** Never initialize or probe the local 940M. Mock local `pynvml`/CUDA for all tests; remote Kaggle 2xT4 only for real inference. Use `/usr/local/bin/python3.13` with `-m pip`/pytest; no uv/ruff/venv/Go. AWS resource writes only after account-specific eligibility check and charge-risk approval. Normal reviewed private Git source pushes are authorized after a secret check; no forced/destructive push. `stokastisk-ai/stokastisk` and docs repos are separate and not automatically writable.
+Absolute prohibitions: **NO AWS GPU** of any kind (EC2 G/P/DL, SageMaker, accelerator instances, GPU container nodes, Bedrock inference fallback); **NO local GeForce 940M access or NVML initialization**. Kaggle's authorized 2x Tesla T4 only runs Stokastisk/vLLM. AWS Lambda/CloudFront/Cognito/database only host the web/control plane, and are still subject to billable-resource approval.
 
-Workflow: (1) inventory current implementation and remote identity; (2) audit local GPU calls before tests; (3) run safe CPU/mock validation; (4) verify Amplify Next.js 16 support or block; (5) implement AWS Cognito/Lambda/database/event adapters with tenant isolation; (6) price and validate IaC without provisioning; (7) review diff and push needed source only to private Enigma; (8) deploy only if resource-cost authorization exists; (9) separately report Kaggle build-5 acceptance as not run until truly tested; (10) safely clean only known generated artifacts and document results.
+Use `/usr/local/bin/python3.13` / `-m pip`; no uv, ruff, venv or Go. Mock local GPU metrics. Audit root AWS keys/security; do not execute deployment as root or silently rotate credentials. Do not create billable resources until region, credits/expiry, pricing and explicit user approval are established. Keep `stokastisk-ai/enigma` private; reviewed secret-free normal pushes permitted, no force/reset. Prior reported test count 184 pass/6 skip is historical; rerun relevant tests. Report actual findings and blockers.

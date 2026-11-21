@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ENIGMA_", extra="ignore", env_file=None)
 
     env: str = "development"                      # development | test | production
-    store: str = "memory"                          # memory | supabase | postgres
+    store: str = "memory"                          # memory | supabase | postgres | dynamodb
     # Supabase (server-only; the service-role key must never reach a browser bundle)
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_service_role_key: str = Field(default="", validation_alias="SUPABASE_SERVICE_ROLE_KEY")
@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     clerk_jwks_url: str = Field(default="", validation_alias="CLERK_JWKS_URL")
     clerk_issuer: str = Field(default="", validation_alias="CLERK_ISSUER")
     clerk_authorized_parties: str = Field(default="", validation_alias="CLERK_AUTHORIZED_PARTIES")  # comma-separated origins (azp)
+    # DynamoDB store (Track B). Table name only: credentials come from the Lambda execution role, never from settings.
+    ddb_table: str = ""                              # env ENIGMA_DDB_TABLE (prefix-derived)
     # PostgreSQL (AWS RDS) store: libpq DSN. Server-only secret; with sslmode=verify-full for RDS. Never logged.
-    db_dsn: str = Field(default="", validation_alias="ENIGMA_DB_DSN")
+    db_dsn: str = ""                                 # env ENIGMA_DB_DSN (prefix-derived)
     # Identity provider for the user plane: "clerk" (historical default) | "cognito" (AWS). Flag-selected; Clerk code is retained until
     # the AWS path is verified live (skills.md section 14).
     auth_provider: str = "clerk"
@@ -68,6 +70,10 @@ class Settings(BaseSettings):
         prod = self.is_production or self.on_vercel
         if self.auth_provider not in ("clerk", "cognito"):
             problems.append("ENIGMA_AUTH_PROVIDER must be 'clerk' or 'cognito'")
+        if self.auth_provider == "cognito" and (self.cognito_region or self.cognito_user_pool_id):
+            import re as _re
+            if not (_re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d", self.cognito_region) and _re.fullmatch(r"[A-Za-z0-9-]+_[A-Za-z0-9]+", self.cognito_user_pool_id)):
+                problems.append("COGNITO_REGION / COGNITO_USER_POOL_ID are malformed (they are used to build the JWKS URL)")
         if self.cognito_jwks_json:
             try:
                 import json as _json
@@ -83,9 +89,12 @@ class Settings(BaseSettings):
         if self.dev_auth and len(self.dev_jwt_secret) < 32:
             problems.append("ENIGMA_DEV_JWT_SECRET must be at least 32 characters when dev auth is on")
         if prod:
-            if self.store not in ("supabase", "postgres"):
-                problems.append("ENIGMA_STORE must be 'supabase' or 'postgres' in production (the memory store is not durable)")
-            if self.store == "postgres":
+            if self.store not in ("supabase", "postgres", "dynamodb"):
+                problems.append("ENIGMA_STORE must be 'supabase', 'postgres' or 'dynamodb' in production (the memory store is not durable)")
+            if self.store == "dynamodb":
+                if not self.ddb_table:
+                    problems.append("ENIGMA_DDB_TABLE is required when ENIGMA_STORE=dynamodb")
+            elif self.store == "postgres":
                 if not self.db_dsn:
                     problems.append("ENIGMA_DB_DSN is required when ENIGMA_STORE=postgres")
                 elif "sslmode=disable" in self.db_dsn or "sslmode=allow" in self.db_dsn or "sslmode=prefer" in self.db_dsn:

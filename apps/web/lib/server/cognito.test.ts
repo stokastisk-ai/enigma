@@ -99,9 +99,10 @@ test("sameOrigin (CSRF): requires an Origin equal to the host", () => {
   assert.equal(sameOrigin("https://evil.example", "app.example.com"), false);
   assert.equal(sameOrigin(null, "app.example.com"), false);
   assert.equal(sameOrigin("not a url", "app.example.com"), false);
-  assert.equal(sameOrigin("https://app.example.com", "internal:3000", "app.example.com"), true);
+  // X-Forwarded-Host is never trusted: only Host and the configured public host count
+  assert.equal(sameOrigin("https://app.example.com", "internal:3000", undefined), false);
   // behind CloudFront -> Function URL: Host is the Lambda URL's, so the configured public host must be accepted, and only that one
-  assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", null, "d111.cloudfront.net"), true);
-  assert.equal(sameOrigin("https://evil.example", "abc.lambda-url.us-east-1.on.aws", null, "d111.cloudfront.net"), false);
-  assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", null, undefined), false);
+  assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", "d111.cloudfront.net"), true);
+  assert.equal(sameOrigin("https://evil.example", "abc.lambda-url.us-east-1.on.aws", "d111.cloudfront.net"), false);
+  assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", undefined), false);
 });

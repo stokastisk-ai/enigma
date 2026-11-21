@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { clerkConfigured, cognitoSelected, devAuthAllowed } from "./env";
 import { COOKIE_ACCESS, COOKIE_REFRESH, cognitoConfig, refresh, verifyAccessToken, type Tokens } from "./cognito";
 
@@ -76,8 +76,3 @@ export async function getSession(): Promise<Session | null> {
   }
   return null;
 }
-
-export const requestHost = async () => {
-  const h = await headers();
-  return { host: h.get("host"), forwarded: h.get("x-forwarded-host") };
-};

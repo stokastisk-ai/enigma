@@ -131,6 +131,10 @@ def _jwks(pub, kid):
     return json.dumps({"keys": [d]})
 
 
+def _no_network(url):
+    raise OSError("network unreachable (VPC without NAT)")
+
+
 def _signed(key, kid, **kw):
     claims = {"sub": "u-pin", "iss": ISS, "iat": int(time.time()), "exp": int(time.time()) + 600, "token_use": "access", "client_id": CLIENT, **kw}
     return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
@@ -144,7 +148,7 @@ def test_pinned_jwks_verifies_without_any_network(monkeypatch):
 
 
 def test_pinned_jwks_unknown_kid_wrong_key_and_forgery_fail_closed():
-    v = UserVerifier(settings(cognito_jwks_json=_jwks(_KEY.public_key(), "pinned-1")))
+    v = UserVerifier(settings(cognito_jwks_json=_jwks(_KEY.public_key(), "pinned-1")), jwks_fetch=_no_network)
     for tok in (_signed(_KEY, "rotated-2"), _signed(_OTHER, "pinned-1"), _signed(_KEY, "pinned-1", client_id="other")):
         with pytest.raises(ApiError) as e:
             v.verify(tok)
@@ -155,3 +159,119 @@ def test_bad_pinned_jwks_is_refused_at_startup():
     for bad in ("not json", "{}", '{"keys": []}', '{"keys":[{"kty":"oct","kid":"x"}]}'):
         assert any("COGNITO_JWKS_JSON" in p for p in settings(cognito_jwks_json=bad).validate_for_startup())
     assert not any("COGNITO_JWKS_JSON" in p for p in settings(cognito_jwks_json=_jwks(_KEY.public_key(), "k")).validate_for_startup())
+
+
+# ---- rotation: cached JWKS, throttled refresh on unknown kid, retired keys dropped, fail closed
+class _Clk:
+    def __init__(self): self.t = 1000.0
+    def __call__(self): return self.t
+
+
+def _doc(*pairs):
+    import json
+    from jwt.algorithms import RSAAlgorithm
+    keys = []
+    for pub, kid in pairs:
+        d = json.loads(RSAAlgorithm.to_jwk(pub)); d.update(kid=kid, alg="RS256", use="sig"); keys.append(d)
+    return {"keys": keys}
+
+
+class _Idp:
+    """Fake Cognito JWKS endpoint that counts requests and can be switched to 'down'."""
+    def __init__(self, doc): self.doc, self.hits, self.down = doc, 0, False
+    def __call__(self, url):
+        assert url == f"{ISS}/.well-known/jwks.json"
+        self.hits += 1
+        if self.down: raise OSError("down")
+        return self.doc
+
+
+def test_normal_mode_fetches_once_then_serves_from_cache():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    for _ in range(5):
+        assert v.verify(_signed(_KEY, "k1")).user_id == "cognito:u-pin"
+    assert idp.hits == 1
+
+
+def test_key_rotation_is_picked_up_without_a_redeploy():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    assert v.verify(_signed(_KEY, "k1"))
+    idp.doc = _doc((_KEY.public_key(), "k1"), (_OTHER.public_key(), "k2"))                     # Cognito publishes a second key
+    clk.t += 301                                                                               # past the refresh throttle
+    assert v.verify(_signed(_OTHER, "k2")).user_id == "cognito:u-pin"
+    assert v.verify(_signed(_KEY, "k1"))                                                       # old key still valid while published
+
+
+def test_forged_kid_flood_cannot_hammer_the_idp():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    v.verify(_signed(_KEY, "k1"))
+    base = idp.hits
+    for i in range(200):
+        with pytest.raises(ApiError):
+            v.verify(_signed(_OTHER, f"forged-{i}"))
+    assert idp.hits - base <= 1                                                                # at most one refresh inside the throttle window
+    clk.t += 301
+    with pytest.raises(ApiError):
+        v.verify(_signed(_OTHER, "forged-x"))
+    assert idp.hits - base <= 2
+
+
+def test_retired_key_is_dropped_after_a_successful_refresh():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"), (_OTHER.public_key(), "k2"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    assert v.verify(_signed(_KEY, "k1"))
+    idp.doc = _doc((_OTHER.public_key(), "k2"))                                                # Cognito retires k1
+    clk.t += 3601                                                                              # cache TTL elapsed -> refresh on next use
+    assert v.verify(_signed(_OTHER, "k2"))
+    with pytest.raises(ApiError) as e:
+        v.verify(_signed(_KEY, "k1"))                                                          # a token signed by the retired key no longer verifies
+    assert e.value.status == 401
+
+
+def test_idp_outage_keeps_known_keys_and_fails_closed_for_unknown():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    assert v.verify(_signed(_KEY, "k1"))
+    idp.down = True
+    clk.t += 4000
+    assert v.verify(_signed(_KEY, "k1"))                                                       # existing key still works during an outage
+    with pytest.raises(ApiError):
+        v.verify(_signed(_OTHER, "never-seen"))                                                 # unknown stays refused
+
+
+def test_pinned_seed_is_replaced_by_the_published_set_when_the_network_is_reachable():
+    idp, clk = _Idp(_doc((_OTHER.public_key(), "k2"))), _Clk()
+    v = UserVerifier(settings(cognito_jwks_json=_jwks(_KEY.public_key(), "pinned-1")), jwks_fetch=idp, clock=clk)
+    assert v.verify(_signed(_KEY, "pinned-1"))                                                  # offline seed works without any fetch
+    assert idp.hits == 0
+    assert v.verify(_signed(_OTHER, "k2"))                                                      # unknown kid -> refresh -> published set replaces the seed
+    clk.t += 301
+    with pytest.raises(ApiError):
+        v.verify(_signed(_KEY, "pinned-1"))                                                     # the pinned key is no longer published, so it is dropped
+
+
+def test_a_garbage_jwks_response_cannot_poison_the_cache():
+    idp, clk = _Idp(_doc((_KEY.public_key(), "k1"))), _Clk()
+    v = UserVerifier(settings(), jwks_fetch=idp, clock=clk)
+    assert v.verify(_signed(_KEY, "k1"))
+    idp.doc = {"keys": []}                                                                      # empty / hostile document
+    clk.t += 4000
+    assert v.verify(_signed(_KEY, "k1"))                                                        # previous good keys retained
+    idp.doc = {"nope": 1}
+    clk.t += 4000
+    assert v.verify(_signed(_KEY, "k1"))
+
+
+def test_malformed_region_or_pool_id_is_refused_at_startup():
+    for region, pool in (("us-east-1/../x", "us-east-1_POOL"), ("us-east-1", "evil.example/x"), ("EU", "us-east-1_POOL")):
+        assert any("malformed" in p for p in settings(cognito_region=region, cognito_user_pool_id=pool).validate_for_startup())
+    assert not any("malformed" in p for p in settings().validate_for_startup())
+
+
+def test_default_fetcher_refuses_non_https_urls():
+    with pytest.raises(OSError):
+        from enigma_api.security import JwksCache
+        JwksCache._default_fetch("http://cognito-idp.us-east-1.amazonaws.com/x/.well-known/jwks.json")

@@ -15,6 +15,7 @@ from . import __version__
 from .config import Config
 from .http import ApiClient, ApiError, AuthError, Transient, backoff_delays
 from .jobs import JobExecutor, StreamingLlm
+from .pacing import ClaimPacer
 from .spool import Spool
 
 log = logging.getLogger("enigma.runner")
@@ -183,6 +184,7 @@ class Connector:
     # ---------------------------------------------------------------- jobs
     def _job_loop(self) -> None:
         delays = backoff_delays(0.5, 15.0)
+        pacer = ClaimPacer(self.cfg.claim_poll_s, self.cfg.claim_poll_idle_s, self.cfg.claim_hot_window_s)
         while not self.stop_event.is_set():
             try:
                 r = self.api.post("/api/v1/jobs/claim", {"lease_seconds": self.cfg.lease_seconds})
@@ -198,7 +200,7 @@ class Connector:
                 continue
             job = r.get("job")
             if not job:
-                if self._wait(max(self.cfg.claim_poll_s, r.get("poll_after_ms", 1000) / 1000.0)):
+                if self._wait(pacer.next_wait(r.get("poll_after_ms", 1000) / 1000.0 if pacer.idle == pacer.fast else 0.0)):
                     return
                 continue
             try:
@@ -208,6 +210,7 @@ class Connector:
             except Exception as e:                                               # noqa: BLE001
                 log.error("job %s crashed: %s", job["job_id"][:8], type(e).__name__)
                 outcome = "failed"
+            pacer.on_activity()
             self.stats["jobs_done" if outcome in ("succeeded", "cancelled") else "jobs_failed"] += 1
             if self.on_job_done:
                 self.on_job_done(outcome)

@@ -17,7 +17,7 @@ Cognito user pool (Lite tier, public client, email sign-up) · CloudWatch Logs (
 ```
 No NAT gateway, no public IPv4, no interface endpoints, no Secrets Manager, no ALB/EC2/ECS/EKS, no Route 53/domain/WAF, no GPU on AWS. The GPU stays on user-launched Kaggle.
 
-**Recommendation.** Web tier: CloudFront + Lambda Web Adapter. API: Lambda Function URL. Identity: Cognito **Lite**. Database: **Track B (DynamoDB) is the only option that can plausibly stay near $0**, but it must first pass the parity gate in `AWS_COST_MATRIX.md` §6. **Track A (RDS) is the only option deployable today** and costs ≈ USD 14/month fixed, funded by credits and then by your card until torn down. If you want a working hosted system soonest, choose Track A with a hard teardown date; if "no out-of-pocket" is the priority, approve the Track B build first.
+**Recommendation.** Web tier: CloudFront + Lambda Web Adapter. API: Lambda Function URL. Identity: Cognito **Lite**. Database: **Track B (DynamoDB)** — it is now implemented and parity-tested against an emulator (`store/dynamodb.py`, `infra/aws/dynamodb.yaml`), needs no VPC/NAT, and is the only option that can plausibly stay near $0. It still needs one **real-table parity run** (a few cents, your approval) before it is called equivalent. **Track A (RDS)** remains deployable and untouched at ≈ USD 14/month fixed, funded by credits and then your card until torn down. Neither track uses any AWS GPU: inference runs only on your Kaggle 2×T4.
 
 ## 2. Expected monthly charges (USD, us-east-1; list prices; from `scripts/aws_cost_model.py`)
 | Workload | Track A — LIST | Track A — with free tiers | Track B — LIST | Track B — with free tiers |
@@ -38,7 +38,7 @@ No NAT gateway, no public IPv4, no interface endpoints, no Secrets Manager, no A
 | 6 | CloudWatch log groups (2) | retention 7 days; no custom metrics/alarms | 0.0–0.5 | template |
 | 7 | S3 bucket | private, block-public-access, SSE, code zips only | ≈0.00 | needed to hold the Lambda zips |
 | 8a | **Track A:** RDS PostgreSQL db.t4g.micro | Single-AZ, 20 GB gp3, **private**, encrypted, 1-day backups, deletion protection OFF for dev, subnet group in 2 AZs (free), security group allowing only the API Lambda | **13.98** | not yet drafted |
-| 8b | **Track B:** DynamoDB tables | on-demand or 25/25 provisioned, TTL, no PITR | 0–1.9 | not built |
+| 8b | **Track B:** DynamoDB table `enigma-dev` | single table, **no GSI**, on-demand (or 25/25 provisioned), TTL on `ttl`, no PITR, AWS-owned-key encryption, managed policy limited to this table with audit rows append-only | 0–1.9 | `infra/aws/dynamodb.yaml` (draft; NOT validated against AWS this session) |
 | 9 | IAM roles (2) | least privilege: logs write only; API additionally VPC ENI for Track A | 0 | template |
 | 10 | AWS Budget + email alert (optional) | notification only — **not a spending cap** | 0 (first budgets free; verify) | needs your OK |
 
@@ -56,9 +56,9 @@ No NAT gateway, no public IPv4, no interface endpoints, no Secrets Manager, no A
 
 ## 6. Deployment sequence (after approval; stop on any unexpected charge or error)
 Tags on everything: `Project=Enigma`, `Environment=dev`, `Owner=<owner>`. Use a **non-root** identity and always pass `--profile`/`--region`.
-1. Create the non-root admin identity; delete the root access keys (your action or your explicit OK).
-2. Cognito pool + client; fetch the pool's JWKS once and store it as `COGNITO_JWKS_JSON`; real two-user test of sign-up/confirm/sign-in/sign-out.
-3. Database: Track A (VPC, subnet group, SG, RDS) **or** Track B (after parity gate). Apply `infra/aws/sql/*.sql` to a dedicated database only.
+1. Create the non-root deployer identity and prove it works **before** touching root keys; then, with your explicit OK, deactivate and later delete the root access keys. Step-by-step plan and a draft policy that **denies every AWS GPU, SageMaker, Bedrock and other forbidden service**: `docs/AWS_ROOT_KEY_REMEDIATION.md`.
+2. Cognito pool + client (Lite); real two-user test of sign-up/confirm/sign-in/sign-out. Normal JWKS fetching works for Track B (no VPC); pinning is only for Track A.
+3. Database: **Track B** — create `infra/aws/dynamodb.yaml`, point the API at it with `ENIGMA_STORE=dynamodb` + `ENIGMA_DDB_TABLE`, and re-run the parity tests against this real table (use a *separate* throwaway table name, then delete it). **Or Track A** (VPC, subnet group, SG, RDS; apply `infra/aws/sql/*.sql` to a dedicated database only).
 4. API Lambda + Function URL; test `/api/v1/health`, 401 without token, two-tenant isolation with real Cognito tokens, job claim/lease/replay.
 5. Web Lambda + Function URL, then CloudFront; verify cookies, sign-in redirect stays on the CloudFront domain, CSRF check passes from the real origin, polling, history after refresh.
 6. You launch the Kaggle notebook (2×T4): browser → AWS → Kaggle connector → streamed chunks, per-GPU NVML, vLLM `/metrics`, disconnect/reconnect and stored history.

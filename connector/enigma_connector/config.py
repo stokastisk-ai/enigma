@@ -30,7 +30,9 @@ class Config:
     vllm_interval_s: float = 2.0
     upload_interval_s: float = 5.0
     heartbeat_interval_s: float = 10.0
-    claim_poll_s: float = 1.0
+    claim_poll_s: float = 1.0                            # fast poll (also the idle poll unless claim_poll_idle_s is larger)
+    claim_poll_idle_s: float = 0.0                       # 0 = same as claim_poll_s (no back-off). e.g. 5.0 cuts claim polls ~72 % (API invocations ~35 %) at ~5 s worst-case pickup; saves < USD 0.4/mo
+    claim_hot_window_s: float = 30.0                     # poll fast this long after start / after any job
     flush_interval_s: float = 0.15                       # token batching window for the browser stream
     keepalive_s: float = 5.0                             # lease renewal while the model is still prefilling
     lease_seconds: int = 30
@@ -49,6 +51,8 @@ class Config:
             raise ConfigError("plain http is only allowed for localhost; use https for a remote Enigma API")
         if not _TOKEN.match(self.token or ""):
             raise ConfigError("ENIGMA_RUNTIME_TOKEN is missing or malformed (expected enig_rt_<8>_<43>)")
+        if not (0.01 <= self.claim_poll_s <= 60) or not (0 <= self.claim_poll_idle_s <= 60) or not (0 <= self.claim_hot_window_s <= 3600):
+            raise ConfigError("claim_poll_s must be 0.01-60, claim_poll_idle_s 0-60, claim_hot_window_s 0-3600")
         if self.mode not in ("stokastisk", "mock"):
             raise ConfigError("mode must be 'stokastisk' or 'mock'")
         lv = urlparse(self.vllm_url)
@@ -67,6 +71,12 @@ class Config:
                      mode=e.get("ENIGMA_MODE", "stokastisk"), spool_dir=e.get("ENIGMA_SPOOL_DIR", ""))
         if e.get("ENIGMA_HEARTBEAT_S"):
             cfg.heartbeat_interval_s = float(e["ENIGMA_HEARTBEAT_S"])           # keep it well under the server's online threshold (default 30 s)
+        for env_key, attr in (("ENIGMA_CLAIM_POLL_S", "claim_poll_s"), ("ENIGMA_CLAIM_POLL_IDLE_S", "claim_poll_idle_s"), ("ENIGMA_CLAIM_HOT_WINDOW_S", "claim_hot_window_s")):
+            if e.get(env_key):
+                try:
+                    setattr(cfg, attr, float(e[env_key]))
+                except ValueError:
+                    raise ConfigError(f"{env_key} must be a number") from None
         for k, v in over.items():
             setattr(cfg, k, v)
         return cfg.validate()

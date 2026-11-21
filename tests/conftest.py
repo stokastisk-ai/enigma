@@ -49,3 +49,46 @@ def _install() -> None:
 
 
 _install()
+
+# ---- network guard: tests may talk to loopback / unix sockets only (moto and the fake IDP/servers need nothing else).
+# This also means no test can ever reach a real AWS endpoint, whatever credentials or mocks are (mis)configured.
+import socket  # noqa: E402
+
+_LOOPBACK = ("127.", "::1", "localhost", "0.0.0.0", "::")
+
+
+class NetworkForbidden(OSError):
+    pass
+
+
+def _is_local(addr) -> bool:
+    if isinstance(addr, (str, bytes)):          # AF_UNIX path
+        return True
+    host = str(addr[0]) if addr else ""
+    return host == "" or host.startswith(_LOOPBACK)
+
+
+def _install_network_guard() -> None:
+    if os.environ.get("ENIGMA_ALLOW_NETWORK") == "1":
+        return
+    real_connect, real_connect_ex, real_gai = socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo
+
+    def connect(self, addr):
+        if not _is_local(addr):
+            raise NetworkForbidden(f"tests may not open non-loopback connections (to {addr[0]!r})")
+        return real_connect(self, addr)
+
+    def connect_ex(self, addr):
+        if not _is_local(addr):
+            raise NetworkForbidden(f"tests may not open non-loopback connections (to {addr[0]!r})")
+        return real_connect_ex(self, addr)
+
+    def getaddrinfo(host, *a, **kw):
+        if host not in (None, "", "localhost") and not str(host).startswith(_LOOPBACK) and not str(host).startswith("/"):
+            raise NetworkForbidden(f"tests may not resolve external host {host!r}")
+        return real_gai(host, *a, **kw)
+
+    socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo = connect, connect_ex, getaddrinfo
+
+
+_install_network_guard()

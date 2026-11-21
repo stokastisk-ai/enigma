@@ -44,7 +44,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   if (!rule) return err(404, "not_found", "not found");
 
   // Cognito sessions are ambient httpOnly cookies, so state-changing requests must be same-origin (SameSite=Lax is the second layer).
-  if (method === "POST" && cognitoSelected() && !sameOrigin(req.headers.get("origin"), req.headers.get("host"), req.headers.get("x-forwarded-host"), process.env.ENIGMA_PUBLIC_HOST))
+  if (method === "POST" && cognitoSelected() && !sameOrigin(req.headers.get("origin"), req.headers.get("host"), process.env.ENIGMA_PUBLIC_HOST))
     return err(403, "bad_origin", "cross-origin request refused");
   const session = await getSession();
   if (!session) return err(401, "unauthorized", "authentication required");

@@ -30,3 +30,9 @@ Browser live updates: bounded polling of `GET /jobs/{id}?after_seq=` (Realtime w
 
 ## Track B (DynamoDB) feasibility notes — design only
 Single table keyed `WS#<id>`; membership item per user; claim via conditional `UpdateItem` on `(status, lease_expires_at)`; events as `JOB#<id>/EVT#<seq>` with `attribute_not_exists` for idempotent ordered writes; TTL for retention; GSI for runtime→pending jobs. No joins/RLS: every query must carry the verified workspace id. Parity tests would be a rewrite of the SQL suite. Not implemented, not tested.
+
+
+## Updated 2026-11-21
+- **Compute boundary:** AWS = CPU control plane only. The only GPU is the user's Kaggle 2×T4; when it is off the UI shows **offline** and keeps history; there is **no** AWS GPU, Bedrock/SageMaker or other hosted-model fallback (enforced by `tests/test_no_aws_gpu.py`).
+- **Track B is implemented (emulator-tested)**: `apps/api/enigma_api/store/dynamodb.py`, selected with `ENIGMA_STORE=dynamodb` + `ENIGMA_DDB_TABLE`. Single table, no GSI, strongly consistent reads, optimistic version counters for atomic claims/ordered events, `TransactWriteItems` for multi-item changes. PostgreSQL store untouched.
+- **Event polling:** browser polls `GET /jobs/{id}?after_seq=` (bounded, authenticated); the connector's claim polling can optionally back off when idle (`ENIGMA_CLAIM_POLL_IDLE_S`, default off).

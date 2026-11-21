@@ -32,3 +32,23 @@ Rotate previously pasted credentials; confirm credit expiry; choose Track A/B an
 - Added: itemized low/moderate/high cost model (`scripts/aws_cost_model.py`, tested), Lambda Web Adapter vs Lambda Web Functions comparison, Track A vs Track B decision record with the DynamoDB parity gate, pinned-JWKS mode (NAT-free VPC Lambda), `ENIGMA_PUBLIC_HOST`/`ENIGMA_PUBLIC_ORIGIN` fixes for CloudFront → Function URL.
 - Expected monthly (us-east-1, list): Track A about USD 14.2 / 15.5 / 19.5 (low / moderate / high); Track B (not built) about USD 0.4 / 2.4 / 7.4. With always-free allowances (unverified for this PAID account): A about 14.0, B about 0.0–0.1.
 - Still BLOCKED: credit expiry date (not in any API; inferred 2027-01-18 to 2027-07-18), your approval of an itemized plan, a non-root deployment identity (root access keys exist), measured Lambda timings, real Lambda Web Adapter behaviour, and Track B tooling approval/build. AWS deployed frontend/API/Cognito/DB: NOT RUN. Kaggle: NOT RUN.
+
+
+## Update 2026-11-21 (Kaggle-only policy, Track B build)
+| Item | Status | Evidence |
+|---|---|---|
+| Local tests | DONE | 317 passed / 6 skipped; smoke OK; SQL 61+78; lint/typecheck clean; 15 unit; 10 browser |
+| Local GPU isolation | DONE | libraries and `nvidia-smi` blocked; env flag; network guard; nothing touched the 940M |
+| No AWS GPU / hosted-AI path | DONE (audited, test-enforced) | `tests/test_no_aws_gpu.py` |
+| DynamoDB Track B adapter | DONE locally (emulator) | 70+ parity tests on moto; **not run on real DynamoDB** |
+| PostgreSQL Track A | DONE, untouched | 33 store tests + 61 SQL checks |
+| Cognito JWKS rotation | DONE locally | cached JWKS, throttled refresh, retirement, fail-closed; not run against a real pool |
+| CloudFront/Function-URL host handling | DONE locally, one bypass found and fixed | live local check |
+| Idle claim back-off | DONE, default OFF | simulation; saves ≈ USD 0.03–0.37/month |
+| Kaggle notebook | UPDATED, NOT RUN | measured assertions, offline/reconnect, secret-free evidence record |
+| AWS account / credits | read-only, partial | PAID, USD 99.99, expiry unknown (console only); only root credentials exist; root access keys present |
+| Root-key remediation | PLAN ONLY | `docs/AWS_ROOT_KEY_REMEDIATION.md` |
+| AWS deployed frontend / API / Cognito / DB | **NOT RUN** | needs your itemized approval + non-root identity |
+| Amplify with Next 16 | BLOCKED | AWS documents Next 12–15 only |
+| Kaggle 2×T4 acceptance, browser → AWS → Kaggle | **NOT RUN** | needs a deployed API and your launching the notebook |
+AWS resources created: **none**.
