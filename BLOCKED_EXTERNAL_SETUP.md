@@ -4,7 +4,7 @@ Legend: DONE = executed and verified in this repository's history; BLOCKED = nee
 
 | Item | Status | Detail |
 |---|---|---|
-| Private GitHub repo `stokastisk-ai/enigma` | see TEST_REPORT.md (push result) | verified PRIVATE, ADMIN permission, `gh` authenticated |
+| Private GitHub repo `stokastisk-ai/enigma` | **DONE** | verified PRIVATE (authenticated API and anonymous 404); checkpoint commit `e60d11d` pushed to `main`, no force |
 | Clerk free **development** instance (sign-up, sign-in, sign-out, real JWKS, 2-user isolation) | **DONE** (dev instance only) | dedicated app "Enigma (dev)" created; keys in ignored `apps/web/.env.local`; 5 API + 1 browser live tests pass |
 | Clerk **production** instance / domains | BLOCKED | needs a real domain and explicit decision; `pk_test_` keys are never for production |
 | Clerk -> Supabase third-party JWT | BLOCKED | needs the Supabase project |
