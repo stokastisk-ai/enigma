@@ -22,9 +22,9 @@ Browser live updates: bounded polling of `GET /jobs/{id}?after_seq=` (Realtime w
 | Hosting | Vercel | Amplify (web) + Lambda (API), draft templates in `infra/aws/` |
 
 ## Open decisions (block deployment; see AWS_COST_MATRIX.md)
-1. **Lambda↔RDS network path without NAT.** A Lambda in a VPC cannot reach Cognito's JWKS or SSM without NAT/endpoints (cost). Candidate: pin the pool JWKS as deploy-time configuration (not implemented).
-2. **DB credential delivery** (`ENIGMA_DB_DSN`): SSM SecureString fetched at init vs encrypted env var — not implemented.
-3. **Next.js 16 on Amplify SSR is BLOCKED** (AWS documents 12–15). The standalone Node bundle (`ENIGMA_STANDALONE=1`) is validated locally as the basis for a Lambda Web Adapter proposal; see AWS_COST_MATRIX.md.
+1. **Lambda↔RDS network path without NAT** — *resolved in code, pending approval:* the API can verify tokens from a pinned JWKS (`COGNITO_JWKS_JSON`), so a VPC Lambda needs no NAT/endpoints; the cost is key-rotation operations. See AWS_COST_MATRIX.md.
+2. **DB credential delivery** (`ENIGMA_DB_DSN`): proposed as an encrypted Lambda environment variable (avoids Secrets Manager $0.40/mo and VPC endpoints $7.30/mo/AZ).
+3. **Web hosting:** recommended CloudFront + Lambda Web Adapter (Event, ARM64); Lambda Web Functions (Node-only, 2026-10-12) is the watch option. **Amplify SSR is BLOCKED** (AWS documents 12–15). The standalone Node bundle (`ENIGMA_STANDALONE=1`) is validated locally as the basis for a Lambda Web Adapter proposal; see AWS_COST_MATRIX.md.
 4. Track A (credit-backed RDS) vs Track B (DynamoDB redesign, not started).
 5. Scheduled retention: Lambda handler supports `{"enigma_task":"prune"}` for EventBridge Scheduler; the schedule is not created.
 

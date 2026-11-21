@@ -121,3 +121,37 @@ def test_cognito_and_clerk_ids_never_collide():
     # A Clerk user whose id happens to look like a Cognito one is still distinct: Clerk ids are never "cognito:"-prefixed by us,
     # and Cognito identities always are, so memberships keyed on user_id cannot be shared across providers.
     assert verifier().verify(mint("user_123")).user_id != "user_123"
+
+
+# ---- pinned JWKS (NAT-free VPC Lambda): no network, fail closed on unknown kid
+def _jwks(pub, kid):
+    import json
+    from jwt.algorithms import RSAAlgorithm
+    d = json.loads(RSAAlgorithm.to_jwk(pub)); d.update(kid=kid, alg="RS256", use="sig")
+    return json.dumps({"keys": [d]})
+
+
+def _signed(key, kid, **kw):
+    claims = {"sub": "u-pin", "iss": ISS, "iat": int(time.time()), "exp": int(time.time()) + 600, "token_use": "access", "client_id": CLIENT, **kw}
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
+
+
+def test_pinned_jwks_verifies_without_any_network(monkeypatch):
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network used")))
+    v = UserVerifier(settings(cognito_jwks_json=_jwks(_KEY.public_key(), "pinned-1")))
+    assert v.verify(_signed(_KEY, "pinned-1")).user_id == "cognito:u-pin"
+
+
+def test_pinned_jwks_unknown_kid_wrong_key_and_forgery_fail_closed():
+    v = UserVerifier(settings(cognito_jwks_json=_jwks(_KEY.public_key(), "pinned-1")))
+    for tok in (_signed(_KEY, "rotated-2"), _signed(_OTHER, "pinned-1"), _signed(_KEY, "pinned-1", client_id="other")):
+        with pytest.raises(ApiError) as e:
+            v.verify(tok)
+        assert e.value.status == 401
+
+
+def test_bad_pinned_jwks_is_refused_at_startup():
+    for bad in ("not json", "{}", '{"keys": []}', '{"keys":[{"kty":"oct","kid":"x"}]}'):
+        assert any("COGNITO_JWKS_JSON" in p for p in settings(cognito_jwks_json=bad).validate_for_startup())
+    assert not any("COGNITO_JWKS_JSON" in p for p in settings(cognito_jwks_json=_jwks(_KEY.public_key(), "k")).validate_for_startup())

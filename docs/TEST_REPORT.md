@@ -70,3 +70,15 @@ Interpreter: `/usr/local/bin/python3.13` (resolves to `/usr/local/python3.13/bin
 | Standalone Next 16 bundle smoke (Node, no AWS) | `/`,`/sign-in` 200; `/app` unauth 307; BFF 401; cross-origin POST 403 |
 **Disclosure:** the earlier AWS-session runs executed `test_real_nvml_on_this_host_if_present`, which initialised NVML and made read-only queries against the laptop GPU (two full pytest runs). It has been replaced by a remote-only test and the guard above. No GPU state was changed; no other GPU path was executed.
 Not run: real AWS, real Cognito/RDS, Kaggle T4, browser→AWS→Kaggle.
+
+
+---
+## Cost-model / deployment-review run (2026-11-21, after commit 4916f44)
+Interpreter `/usr/local/bin/python3.13`; local GPU guard active (`ENIGMA_FORBID_LOCAL_GPU=1`, GPU libraries blocked); no AWS resource created or modified (read-only CLI and Price List API only).
+| Command | Result |
+|---|---|
+| `/usr/local/bin/python3.13 -m pytest` | **184 passed, 6 skipped** (5 opt-in live Clerk + 1 remote-only GPU). +8 vs 176: 3 pinned-JWKS tests, 5 cost-model tests |
+| `scripts/smoke_e2e.py` | SMOKE OK (synthetic) |
+| `tests/sql/run_aws_sql_tests.py` / `run_sql_tests.py` | 61 / 78 checks passed |
+| `npm run lint`, `typecheck`, `test:unit` (15, incl. new public-host CSRF cases), `test:e2e` | clean; 15 pass; 10 passed |
+Evidence limits: pinned-JWKS and CSRF/public-host logic are proven with local keys and unit cases only. Behaviour behind real CloudFront/Lambda Function URL/Web Adapter, cookie pass-through and cold-start latency are **NOT RUN**. Cost figures are model outputs from list prices, not billing data.

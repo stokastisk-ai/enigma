@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     cognito_region: str = Field(default="", validation_alias="COGNITO_REGION")
     cognito_user_pool_id: str = Field(default="", validation_alias="COGNITO_USER_POOL_ID")
     cognito_app_client_id: str = Field(default="", validation_alias="COGNITO_APP_CLIENT_ID")
+    # Optional PINNED signing keys (the pool's JWKS document, JSON). Lets a VPC-attached Lambda verify tokens with NO outbound network
+    # (no NAT gateway). Operational risk: if Cognito rotates the pool's keys, tokens with the new `kid` are refused until this is updated.
+    cognito_jwks_json: str = Field(default="", validation_alias="COGNITO_JWKS_JSON")
     cognito_token_use: str = Field(default="access", validation_alias="COGNITO_TOKEN_USE")   # access | id
     # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Vercel.
     dev_auth: bool = False
@@ -65,6 +68,14 @@ class Settings(BaseSettings):
         prod = self.is_production or self.on_vercel
         if self.auth_provider not in ("clerk", "cognito"):
             problems.append("ENIGMA_AUTH_PROVIDER must be 'clerk' or 'cognito'")
+        if self.cognito_jwks_json:
+            try:
+                import json as _json
+                keys = _json.loads(self.cognito_jwks_json).get("keys")
+                if not (isinstance(keys, list) and keys and all(isinstance(k, dict) and k.get("kid") and k.get("kty") == "RSA" for k in keys)):
+                    raise ValueError
+            except ValueError:
+                problems.append("COGNITO_JWKS_JSON must be a JWKS document with RSA keys that carry a kid")
         if self.cognito_token_use not in ("access", "id"):
             problems.append("COGNITO_TOKEN_USE must be 'access' or 'id'")
         if self.dev_auth and (prod or self.env not in ("development", "test")):

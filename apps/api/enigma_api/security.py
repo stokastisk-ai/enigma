@@ -98,6 +98,18 @@ class UserVerifier:
         self.s = settings
         self._resolver = key_resolver
         self._jwk_client: jwt.PyJWKClient | None = None
+        self._pinned: Any = None
+
+    def _pinned_key(self, token: str) -> Any:
+        """Key from the operator-pinned JWKS (no network). Unknown `kid` => PyJWKSetError => 401 (fail closed)."""
+        if self._pinned is None:
+            import json
+            self._pinned = jwt.PyJWKSet.from_dict(json.loads(self.s.cognito_jwks_json))
+        kid = jwt.get_unverified_header(token).get("kid")
+        for k in self._pinned.keys:
+            if k.key_id == kid:
+                return k.key
+        raise jwt.PyJWTError("unknown kid")
 
     def _verify_cognito(self, token: str) -> "UserIdentity":
         """Cognito user-pool JWT: RS256, issuer pinned to the pool, expiry, ``token_use`` and app-client binding all enforced.
@@ -111,6 +123,8 @@ class UserVerifier:
             raise unauthorized
         if self._resolver:
             key = self._resolver(token)
+        elif s.cognito_jwks_json:
+            key = self._pinned_key(token)
         else:
             if not self._jwk_client:
                 self._jwk_client = jwt.PyJWKClient(s.cognito_jwks_url, cache_keys=True, lifespan=3600, timeout=5)

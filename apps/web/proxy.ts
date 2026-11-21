@@ -26,7 +26,8 @@ async function cognito(req: NextRequest) {
   if (at && (await verifyAccessToken(at, cfg))) return NextResponse.next();
   if (req.cookies.get(COOKIE_REFRESH)) return NextResponse.next(); // session refresh happens server-side; an invalid refresh token ends at the page gate
   if (pathname.startsWith("/api/")) return NextResponse.json({ error: { code: "unauthorized", message: "authentication required" } }, { status: 401 });
-  return NextResponse.redirect(new URL("/sign-in", req.url));
+  // Behind CloudFront the request URL carries the Function URL host; redirect to the configured public origin so users never leave the CDN.
+  return NextResponse.redirect(new URL("/sign-in", process.env.ENIGMA_PUBLIC_ORIGIN || req.url));
 }
 
 /** Fail closed: with no provider and no explicitly-allowed dev mode, every non-public route is refused. */

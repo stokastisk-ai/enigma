@@ -25,3 +25,10 @@
 
 ## Not done / next
 Rotate previously pasted credentials; confirm credit expiry; choose Track A/B and a NAT-free network design; test Next 16 on Amplify; real Cognito + RDS tests only after approval. No commit or push was made.
+
+
+## Update 2026-11-21 (cost and deployment review)
+- Commit `4916f44` verified identical on the private `stokastisk-ai/enigma` remote.
+- Added: itemized low/moderate/high cost model (`scripts/aws_cost_model.py`, tested), Lambda Web Adapter vs Lambda Web Functions comparison, Track A vs Track B decision record with the DynamoDB parity gate, pinned-JWKS mode (NAT-free VPC Lambda), `ENIGMA_PUBLIC_HOST`/`ENIGMA_PUBLIC_ORIGIN` fixes for CloudFront → Function URL.
+- Expected monthly (us-east-1, list): Track A about USD 14.2 / 15.5 / 19.5 (low / moderate / high); Track B (not built) about USD 0.4 / 2.4 / 7.4. With always-free allowances (unverified for this PAID account): A about 14.0, B about 0.0–0.1.
+- Still BLOCKED: credit expiry date (not in any API; inferred 2027-01-18 to 2027-07-18), your approval of an itemized plan, a non-root deployment identity (root access keys exist), measured Lambda timings, real Lambda Web Adapter behaviour, and Track B tooling approval/build. AWS deployed frontend/API/Cognito/DB: NOT RUN. Kaggle: NOT RUN.

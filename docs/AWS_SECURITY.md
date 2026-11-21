@@ -18,3 +18,10 @@
 - The deploying identity is currently **root**: replace it with a least-privilege role before any provisioning.
 - Previously pasted Clerk/Supabase/Google credentials from earlier chats must be rotated; none were read or copied.
 - Existing local `apps/web/.env.local` (Clerk dev keys) is untouched and ignored by git.
+
+
+## Added 2026-11-21 (cost/deployment review)
+- **Root credentials:** the CLI profile authenticates as the account **root user**, and root **access keys exist** (MFA is enabled). Root keys should be deleted and a least-privilege identity used for all deployment work. Nothing was changed (no IAM modifications were authorised).
+- **Pinned JWKS (`COGNITO_JWKS_JSON`)** lets a VPC-attached Lambda verify Cognito tokens with no outbound network. Fail-closed on unknown `kid`; malformed JSON refuses to start. Risk: key rotation requires a config update. Tests: `tests/api/test_cognito_auth.py`.
+- **CloudFront → Function URL:** the origin sees the Function URL's `Host`, so the CSRF same-origin check accepts only the configured `ENIGMA_PUBLIC_HOST` in addition to `Host`/`X-Forwarded-Host`; the sign-in redirect uses `ENIGMA_PUBLIC_ORIGIN`. CloudFront must not forward the viewer `Host`.
+- Function URLs with `AuthType NONE` stay public at the edge; per-instance in-memory rate limiting is not a global limit; reserved concurrency (5) bounds abuse cost.

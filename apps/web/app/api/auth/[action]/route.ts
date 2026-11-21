@@ -24,7 +24,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   const { action } = await ctx.params;
   const cfg = cognitoConfig();
   if (!cognitoSelected() || !cfg || !(action in BODIES)) return json(404, { error: { code: "not_found", message: "not found" } });
-  if (!sameOrigin(req.headers.get("origin"), req.headers.get("host"), req.headers.get("x-forwarded-host")))
+  if (!sameOrigin(req.headers.get("origin"), req.headers.get("host"), req.headers.get("x-forwarded-host"), process.env.ENIGMA_PUBLIC_HOST))
     return json(403, { error: { code: "bad_origin", message: "cross-origin request refused" } });
   if (Number(req.headers.get("content-length") ?? 0) > 4096) return json(413, { error: { code: "payload_too_large", message: "body too large" } });
 
