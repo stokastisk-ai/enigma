@@ -39,3 +39,34 @@ Built-in regex scan of the working tree and every Git object (Clerk sk/pk, Googl
 
 ## Still true from before
 Not verified: real vLLM `/metrics` values, real T4 NVML, TP=2/PP=2, other models, behaviour under real load. NVML was sampled only on this host's GeForce 940M (shape/plausibility). `SupabaseStore` is tested only against a mocked transport; the SQL itself on local Postgres with a Supabase shim.
+
+
+---
+## AWS migration run (2026-11-21) — executed in this session
+| Command | Result |
+|---|---|
+| `python3.13 -m pytest` | 167 passed, 5 skipped (live Clerk, opt-in) — baseline before changes: 114 + 5 |
+| `python3.13 scripts/smoke_e2e.py` | SMOKE OK (synthetic data) |
+| `cd apps/web && npm run lint && npm run typecheck && npm run build` | clean |
+| `npm run test:e2e` | 10 passed (mock mode) |
+| `npm run test:unit` | 15 passed (Cognito claims/IDP/CSRF; local keys) |
+| `python3.13 tests/sql/run_sql_tests.py` | 78 checks passed (historical Supabase shim) |
+| `python3.13 tests/sql/run_aws_sql_tests.py` | 61 checks passed (portable schema, PG18 throwaway cluster) |
+| `tests/api/test_postgres_store.py` | 33 passed (27 re-run API tests + 6 Postgres-specific) |
+| Manual curl run vs fake Cognito + `next dev` | redirects/401/403/cookie flags/sign-out as designed |
+All Cognito/Postgres results above use **local test doubles/clusters**, not AWS. Live AWS, Kaggle GPU and Supabase remain unverified.
+
+
+---
+## Re-run with the exact interpreter and local-GPU guard (2026-11-21, later session)
+Interpreter: `/usr/local/bin/python3.13` (resolves to `/usr/local/python3.13/bin/python3.13`, 3.13.15). `pip check`: no broken requirements. All GPU libraries blocked and `ENIGMA_FORBID_LOCAL_GPU=1` for every run below.
+| Command | Result |
+|---|---|
+| `/usr/local/bin/python3.13 -m pytest` | **176 passed, 6 skipped** (5 opt-in live Clerk + 1 remote-only real-NVML). Earlier README claim: 167 passed / 5 skipped |
+| `scripts/smoke_e2e.py` | SMOKE OK (synthetic) |
+| `tests/sql/run_aws_sql_tests.py` / `run_sql_tests.py` | 61 / 78 checks passed (+25 rollback-only verifier) |
+| `npm run lint`, `typecheck`, `build`, `test:unit` (15), `npm audit --omit=dev` | clean; 0 vulnerabilities |
+| `npm run test:e2e` (Chrome) | 10 passed |
+| Standalone Next 16 bundle smoke (Node, no AWS) | `/`,`/sign-in` 200; `/app` unauth 307; BFF 401; cross-origin POST 403 |
+**Disclosure:** the earlier AWS-session runs executed `test_real_nvml_on_this_host_if_present`, which initialised NVML and made read-only queries against the laptop GPU (two full pytest runs). It has been replaced by a remote-only test and the guard above. No GPU state was changed; no other GPU path was executed.
+Not run: real AWS, real Cognito/RDS, Kaggle T4, browser→AWS→Kaggle.

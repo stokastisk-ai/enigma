@@ -1,0 +1,20 @@
+# Amplify Hosting build spec for the Next.js app in the apps/web monorepo folder. REVIEW DRAFT, NOT DEPLOYED.
+# BLOCKED: AWS documents Amplify SSR for Next.js 12-15 only; this repo uses Next.js 16.4.6 (see docs/AWS_COST_MATRIX.md). Do not deploy.
+version: 1
+applications:
+  - appRoot: apps/web
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+        build:
+          commands:
+            # Public identifiers only; server secrets must come from Amplify's encrypted environment, never this file.
+            - env | grep -E '^(NEXT_PUBLIC_|ENIGMA_AUTH_PROVIDER|ENIGMA_API_URL)' >> .env.production || true
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files: ['**/*']
+      cache:
+        paths: [node_modules/**/*, .next/cache/**/*]

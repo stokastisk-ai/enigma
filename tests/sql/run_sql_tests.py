@@ -30,7 +30,7 @@ def find_pg_bin() -> Path | None:
     return Path(w).parent if w else None
 
 
-def run_all() -> tuple[bool, str]:
+def run_all(steps: list[Path] | None = None) -> tuple[bool, str]:
     pgbin = find_pg_bin()
     if pgbin is None or not shutil.which("psql"):
         raise FileNotFoundError("PostgreSQL server binaries (initdb/pg_ctl) or psql not found")
@@ -52,7 +52,7 @@ def run_all() -> tuple[bool, str]:
         def psql(path: Path) -> subprocess.CompletedProcess:
             return subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", str(path)], capture_output=True, text=True, env=env)
 
-        steps = [SQL_DIR / "supabase_shim.sql", *sorted((ROOT / "supabase" / "migrations").glob("*.sql")),
+        steps = steps or [SQL_DIR / "supabase_shim.sql", *sorted((ROOT / "supabase" / "migrations").glob("*.sql")),
                  ROOT / "supabase" / "verify" / "rls_two_tenant.sql",      # hosted-project verifier: must pass AND leave nothing behind
                  SQL_DIR / "assert_clean_after_verify.sql", SQL_DIR / "test_rls_and_jobs.sql"]
         out = ""

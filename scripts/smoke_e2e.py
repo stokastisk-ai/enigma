@@ -1,6 +1,6 @@
 """One-command smoke test of the transport: user -> API -> job -> connector (MOCK) -> events -> final message -> metrics.
 
-    python3.13 scripts/smoke_e2e.py
+    /usr/local/bin/python3.13 scripts/smoke_e2e.py
 
 Starts the real FastAPI app (in-memory store) and the labelled mock connector as subprocesses, runs one chat, prints measured values,
 then stops both. Everything it reports is SYNTHETIC. Exit code 0 only if the whole path worked."""
@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ["ENIGMA_FORBID_LOCAL_GPU"] = "1"     # children inherit it: no physical GPU access from this script, ever
 SECRET = secrets.token_hex(32)          # throwaway per run; never a committed value
 
 

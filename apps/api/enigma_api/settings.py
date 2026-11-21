@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ENIGMA_", extra="ignore", env_file=None)
 
     env: str = "development"                      # development | test | production
-    store: str = "memory"                          # memory | supabase
+    store: str = "memory"                          # memory | supabase | postgres
     # Supabase (server-only; the service-role key must never reach a browser bundle)
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_service_role_key: str = Field(default="", validation_alias="SUPABASE_SERVICE_ROLE_KEY")
@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     clerk_jwks_url: str = Field(default="", validation_alias="CLERK_JWKS_URL")
     clerk_issuer: str = Field(default="", validation_alias="CLERK_ISSUER")
     clerk_authorized_parties: str = Field(default="", validation_alias="CLERK_AUTHORIZED_PARTIES")  # comma-separated origins (azp)
+    # PostgreSQL (AWS RDS) store: libpq DSN. Server-only secret; with sslmode=verify-full for RDS. Never logged.
+    db_dsn: str = Field(default="", validation_alias="ENIGMA_DB_DSN")
+    # Identity provider for the user plane: "clerk" (historical default) | "cognito" (AWS). Flag-selected; Clerk code is retained until
+    # the AWS path is verified live (skills.md section 14).
+    auth_provider: str = "clerk"
+    cognito_region: str = Field(default="", validation_alias="COGNITO_REGION")
+    cognito_user_pool_id: str = Field(default="", validation_alias="COGNITO_USER_POOL_ID")
+    cognito_app_client_id: str = Field(default="", validation_alias="COGNITO_APP_CLIENT_ID")
+    cognito_token_use: str = Field(default="access", validation_alias="COGNITO_TOKEN_USE")   # access | id
     # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Vercel.
     dev_auth: bool = False
     dev_jwt_secret: str = ""
@@ -33,6 +42,14 @@ class Settings(BaseSettings):
     max_body_bytes_app: int = 128 * 1024
     max_prompt_chars: int = 16000
     credential_default_days: int = 30
+
+    @property
+    def cognito_issuer(self) -> str:
+        return f"https://cognito-idp.{self.cognito_region}.amazonaws.com/{self.cognito_user_pool_id}" if self.cognito_region and self.cognito_user_pool_id else ""
+
+    @property
+    def cognito_jwks_url(self) -> str:
+        return self.cognito_issuer + "/.well-known/jwks.json" if self.cognito_issuer else ""
 
     @property
     def is_production(self) -> bool:
@@ -46,16 +63,28 @@ class Settings(BaseSettings):
         """Return a list of fatal configuration problems. Called at app creation; production refuses to boot with any."""
         problems: list[str] = []
         prod = self.is_production or self.on_vercel
+        if self.auth_provider not in ("clerk", "cognito"):
+            problems.append("ENIGMA_AUTH_PROVIDER must be 'clerk' or 'cognito'")
+        if self.cognito_token_use not in ("access", "id"):
+            problems.append("COGNITO_TOKEN_USE must be 'access' or 'id'")
         if self.dev_auth and (prod or self.env not in ("development", "test")):
             problems.append("ENIGMA_DEV_AUTH must not be enabled in production/Vercel/non-dev environments")
         if self.dev_auth and len(self.dev_jwt_secret) < 32:
             problems.append("ENIGMA_DEV_JWT_SECRET must be at least 32 characters when dev auth is on")
         if prod:
-            if self.store != "supabase":
-                problems.append("ENIGMA_STORE must be 'supabase' in production (the memory store is not durable)")
-            if not (self.supabase_url.startswith("https://") and self.supabase_service_role_key):
+            if self.store not in ("supabase", "postgres"):
+                problems.append("ENIGMA_STORE must be 'supabase' or 'postgres' in production (the memory store is not durable)")
+            if self.store == "postgres":
+                if not self.db_dsn:
+                    problems.append("ENIGMA_DB_DSN is required when ENIGMA_STORE=postgres")
+                elif "sslmode=disable" in self.db_dsn or "sslmode=allow" in self.db_dsn or "sslmode=prefer" in self.db_dsn:
+                    problems.append("ENIGMA_DB_DSN must not weaken TLS in production (use sslmode=require or verify-full)")
+            elif not (self.supabase_url.startswith("https://") and self.supabase_service_role_key):
                 problems.append("SUPABASE_URL (https) and SUPABASE_SERVICE_ROLE_KEY are required in production")
-            if not (self.clerk_jwks_url.startswith("https://") and self.clerk_issuer.startswith("https://")):
+            if self.auth_provider == "cognito":
+                if not (self.cognito_issuer and self.cognito_app_client_id):
+                    problems.append("COGNITO_REGION, COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID are required when ENIGMA_AUTH_PROVIDER=cognito")
+            elif not (self.clerk_jwks_url.startswith("https://") and self.clerk_issuer.startswith("https://")):
                 problems.append("CLERK_JWKS_URL and CLERK_ISSUER (https) are required in production")
             if len(self.cron_secret) < 24:
                 problems.append("CRON_SECRET (>=24 chars) is required in production")

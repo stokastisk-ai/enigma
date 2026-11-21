@@ -6,6 +6,7 @@ so this coexists with the SDK's own NVML probes."""
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,9 +22,16 @@ def _s(v: Any) -> str:
     return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
 
 
+def local_gpu_forbidden() -> bool:
+    """True when this process must never touch a physical GPU (laptop/dev host). Set by tests, smoke scripts and the e2e harness."""
+    return os.environ.get("ENIGMA_FORBID_LOCAL_GPU") == "1"
+
+
 class NvmlSampler:
     def __init__(self, nvml: Any = None):
         if nvml is None:
+            if local_gpu_forbidden():            # hard stop BEFORE importing/initialising the real NVML
+                raise NvmlUnavailable("local GPU access is forbidden on this host (ENIGMA_FORBID_LOCAL_GPU=1)")
             try:
                 import pynvml as nvml            # provided by the nvidia-ml-py distribution
             except ImportError as e:

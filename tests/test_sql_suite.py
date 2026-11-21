@@ -13,3 +13,13 @@ def test_migrations_and_rls_assertions():
     ok, log = run_sql_tests.run_all()
     assert ok, log[-3000:]
     assert "SQL checks passed" in log
+
+
+import run_aws_sql_tests  # noqa: E402
+
+
+@pytest.mark.skipif(run_sql_tests.find_pg_bin() is None, reason="PostgreSQL server binaries not installed")
+def test_portable_aws_schema_and_privilege_assertions():
+    ok, log = run_sql_tests.run_all(run_aws_sql_tests.STEPS)
+    assert ok, log[-3000:]
+    assert "AWS SQL checks passed" in log

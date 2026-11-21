@@ -6,9 +6,9 @@ export const API = "http://127.0.0.1:8787";
 const connectorDir = path.resolve(__dirname, "../../../connector");
 
 export function startConnector(token: string, delay = "0.02"): ChildProcess {
-  return spawn("python3.13", ["-m", "enigma_connector", "--mode", "mock"], {
+  return spawn("/usr/local/bin/python3.13", ["-m", "enigma_connector", "--mode", "mock"], {
     cwd: connectorDir,
-    env: { ...process.env, ENIGMA_API_URL: API, ENIGMA_RUNTIME_TOKEN: token, ENIGMA_INSTANCE: `e2e-${Date.now() % 100000}`, ENIGMA_MOCK_TOKEN_DELAY_S: delay, ENIGMA_HEARTBEAT_S: "1.5", PYTHONDONTWRITEBYTECODE: "1" },
+    env: { ...process.env, ENIGMA_API_URL: API, ENIGMA_RUNTIME_TOKEN: token, ENIGMA_INSTANCE: `e2e-${Date.now() % 100000}`, ENIGMA_MOCK_TOKEN_DELAY_S: delay, ENIGMA_HEARTBEAT_S: "1.5", PYTHONDONTWRITEBYTECODE: "1", ENIGMA_FORBID_LOCAL_GPU: "1" },
     stdio: "ignore",
   });
 }

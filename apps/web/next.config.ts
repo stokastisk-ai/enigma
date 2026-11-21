@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
   // The mock E2E suite builds into its own directory with Clerk disabled, so it never shares a build with the real-auth configuration.
   distDir: process.env.ENIGMA_DIST_DIR || ".next",
   poweredByHeader: false,
+  // Opt-in self-contained Node server bundle (.next-standalone/standalone/server.js) for a Lambda Web Adapter / container-less host.
+  // Used only to validate the AWS alternative while Amplify Hosting does not document Next.js 16; the default build is unchanged.
+  ...(process.env.ENIGMA_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

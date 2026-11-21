@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { clerkConfigured } from "@/lib/server/env";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -17,8 +18,6 @@ export const metadata: Metadata = {
 // Auth configuration is read from the runtime environment, so nothing here may be prerendered at build time.
 export const dynamic = "force-dynamic";
 
-const clerkOn = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const body = (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
@@ -28,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
   return (
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{clerkOn ? <ClerkProvider>{body}</ClerkProvider> : body}</body>
+      <body className="min-h-full flex flex-col">{clerkConfigured() ? <ClerkProvider>{body}</ClerkProvider> : body}</body>
     </html>
   );
 }

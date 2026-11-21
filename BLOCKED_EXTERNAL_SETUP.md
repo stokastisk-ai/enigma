@@ -24,3 +24,9 @@ Legend: DONE = executed and verified in this repository's history; BLOCKED = nee
 
 ## Kaggle (after an endpoint exists)
 Run `docs/kaggle/enigma_connector_kaggle.ipynb` yourself with Stokastisk build 5, tick its checklist, record results in `docs/TEST_REPORT.md`.
+
+
+## AWS (2026-11-21)
+- Cost gate: PAID plan, USD 99.99 credits, expiry unknown, zero resources; no deployment approved. See docs/AWS_COST_MATRIX.md.
+- Amplify Hosting: BLOCKED for Next.js 16 (AWS documents 12–15).
+- Kaggle acceptance: NOT RUN. Run `docs/kaggle/enigma_connector_kaggle.ipynb` yourself (needs a deployed HTTPS API).

@@ -271,3 +271,176 @@ G. Update `README.md`, `docs/TEST_REPORT.md`, `docs/DEPLOYMENT.md`, and `BLOCKED
 - Clerk's API edge rejects Python's default `urllib` User-Agent (HTTP 403); live tests send an explicit one.
 - `next build/start` read `apps/web/.env.local`; the mock E2E suite therefore builds into `.next-e2e` with Clerk variables blanked.
 - Backup patterns (`*.backup-*`) are now git-ignored.
+
+
+---
+
+# 14. AWS-only hosting migration charter — AUTHORITATIVE OVERRIDE (2026-11-21)
+
+**Precedence:** This section supersedes conflicting Vercel/Supabase/Clerk infrastructure directives in Sections 1–13. Retain previous sections for historical reasoning and original acceptance criteria. `CLAUDE.md` must load this entire `skills.md` and specifically this AWS override. Existing app code is NOT already migrated. Do not call the migration complete without real AWS verification.
+
+## 14.1 Product, repository and local environment
+
+- **Product:** Enigma, a proprietary multi-tenant Next.js/shadcn observability and chat workspace for Stokastisk SDK 0.1.0 build 5, vLLM 0.25.1 and 2 × T4 GPUs in personal authorized Kaggle sessions. SDK remains independent. Commercial inference must use an explicitly authorized non-Kaggle GPU host; Kaggle availability is ephemeral.
+- **Repository:** `https://github.com/stokastisk-ai/enigma.git` PRIVATE; do not make public, transfer, fork to public, commit vendor source, or add open-source license. Preserve Git history and existing application. No force pushes.
+- **Path:** `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/` on Ubuntu 24. `aws` executable at `/home/waqasm86/.local/bin/aws` (reported CLI v2.36.40) is a CLI, not a Python project interpreter. Use **manually installed `python3.13` and `python3.13 -m pip`** for all local Python tasks; no `uv`, `ruff`, `venv`, `virtualenv`, Poetry, Pipenv or Conda. No automatic `--break-system-packages`. Keep npm lockfile and existing frontend.
+- **GPU observability instruments ONLY:** `nvidia-ml-py` / `pynvml`, `prometheus_client` (including parser), plus Stokastisk/vLLM-native metrics. No OpenTelemetry, Grafana binaries, external observability agents, Go, or additional GPU instrumentation. AWS CloudWatch logs for *hosting operations* may be used sparingly; it is not a substitute GPU-inference telemetry collector.
+- **Pre-existing tests:** 114 local Python tests reported passed; 5 opt-in live tests skipped; 10 mock browser tests; local SQL 78 checks and rollback verifier 25 checks. The new AWS auth/data backends must pass new live isolation tests; prior Supabase-shim tests alone are not AWS verification.
+- **Disk baseline:** 718 MiB total, 714 MiB `apps/web/node_modules`, 1.9 MiB `.git`, 157 Git-tracked files; `CLAUDE_CLI_PROMPT.md` and `README_INSTALL.md` untracked. `node_modules` is reproducible, not to be committed. Clean only positively identified generated task artifacts, NEVER unknown/untracked files, migrations, lockfiles, credentials, git history or SDK binaries. Obtain authorization before deleting dependencies. Preserve `.gitignore` patterns.
+
+## 14.2 Absolute AWS cost/authorization gate (execute BEFORE writes)
+
+**Never equate AWS Free Tier listing, 'always free', service's no additional control-plane charge, or promotional credits with a guaranteed $0 deployment.** Read the two uploaded source lists as historical inputs, verify official live prices/quotas/account applicability by region. User demands only $0 *out-of-pocket*, no paid subscriptions; no purchases, plan upgrade, credit-card charges, budget creation that incurs a charge, or unexpected resource spending. AWS Free plan may end after 6 months or credit exhaustion; an account can be on PAID plan even with unused credits. A prior local account diagnostic reported a PAID plan and $99.99 credits, so **do not assume Free plan**. AWS Free/credit status must be checked live, not inferred from account age or those old logs. Credits are finite and service/region-specific. If PAID plan, budget alert alone does NOT cap spending; do not provision without a verified $0 cost guarantee or explicit user authorization of a bounded risk/budget.
+
+Read-only initial commands (never disclose access keys, tokens or complete account identifiers in logs):
+```
+aws --version
+aws configure list-profiles
+aws sts get-caller-identity --query '{Arn:Arn}' --output json
+aws configure get region
+aws account get-account-information --query 'AccountState' --output text  # skip if unsupported/AccessDenied
+aws free-tier get-free-tier-usage --output json  # skip if unsupported; output could be large
+```
+Inspect AWS Billing console for account plan Free/Paid, credit balance, credit expiration date, Free Tier availability, resource inventory, region prices, and payment exposure. AWS CLI result alone does not establish plan/credits. Use one explicitly approved region, never create a second region silently. Prepare `docs/AWS_COST_MATRIX.md` with per-resource: service, type, region, free monthly quota, trial/credit usage, dependency charges, projected utilization, estimated cost, current account applicability, source URL, outcome `ELIGIBLE/UNKNOWN/BLOCKED`. Default to `BLOCKED` if unknown. Set AWS Budgets/Free Tier alerts only if user approves any change and verified cost is $0; alerts are not hard caps. Record teardown plan before provisioning. Prefer read-only audit, local refactor, and AWS dry-run/template validation first.
+
+No new IAM users/access keys; use existing safe credential chain/profile. Prefer IAM roles and short-lived credentials. Never print env values or run `aws configure` with credentials in command arguments. Avoid saving secrets in CloudFormation parameter defaults or GitHub workflows. All AWS deployments require exact resource inventory and user approval of cost risk; writing the instruction files is NOT authorization to provision AWS resources.
+
+## 14.3 AWS architecture: two assessed tracks, explicit decision gate
+
+**Track A — pragmatic migration with existing SQL (credit-limited, not always-free):**
+- Next.js 16 App Router / shadcn / Recharts on **AWS Amplify Hosting (SSR)**, deploying *private organization GitHub repo* if account/repo integration permissions and hosting Next.js version/build compatibility are verified. Monorepo app root `apps/web`; build settings must be validated, not guessed. Do not vendor an Amplify Gen2 data/auth backend; use **Amplify Hosting only** where possible.
+- FastAPI Python **3.13** API on **AWS Lambda**, adapted using `Mangum` (if compatible) or `awslabs/aws-lambda-web-adapter` with validated packaging. DO NOT use Go or deploy Stokastisk/vLLM/CUDA to Lambda. Expose an authenticated HTTPS API through **API Gateway HTTP API** (usage/cost check) or securely designed Lambda Function URL. Function URL with `NONE` is publicly callable at AWS edge regardless of CORS: application auth mandatory; prefer IAM protection where appropriate. Test actual request-body size, timeouts, Python runtime availability, async behavior and API paths.
+- **Amazon RDS PostgreSQL Single-AZ** low-tier eligible configuration only if remaining Free Tier/credits and region agree; preserve existing Enigma schema, SQL atomic leases and transactions, but **Supabase-specific `auth.uid()`, RLS policies, publication/Realtime, JWT helpers and extensions do not magically work on vanilla RDS**. Rewrite or replace Supabase-specific database policies; strict server-side verified `workspace_id` authorization, least-privilege DB roles, cross-tenant tests, transactional locking and safe migrations. Do NOT execute existing `supabase/migrations` blindly on RDS; audit SQL first. Use private DB access. Lambda VPC networking, NAT Gateway costs, IPv4 charges, connection limits and RDS accessibility must be priced; no public RDS for a cheap shortcut. RDS/EC2 are not indefinitely free.
+- **Amazon Cognito User Pools** replaces Clerk for an all-AWS identity plane; verify current MAU allowances, public-key JWT signature (`iss`,`aud`/client ID, `token_use`, expiry), protected group/workspace membership, frontend callback/signout and secret handling. Do not retain Clerk production dependency as hidden requirement.
+- **Amazon S3** stores opt-in exports/artifacts/large immutable outputs with private bucket, block public access, encryption, presigned uploads, sizes and lifecycle; not raw model weight uploads by default. S3 storage and request charges must be counted.
+- **Realtime:** start with bounded browser short-polling for job/events and an outbound Kaggle connector; avoid perpetual connections in Lambda. Keep `(job_id, event_seq)` ordering, once-only final message, job lease, idempotency and offline spool. Do not assume SQS is a drop-in replacement for atomic SQL leasing or server-push browser messages. Optional AppSync/WebSocket only after pricing, authentication and implementation review.
+- **CloudFront** is normally part of Amplify Hosting delivery; do not create a redundant standalone distribution. Review bandwidth limits; built-in CloudFront allowance does not make Amplify builds/SSR free. **Route 53 hosted zones and domain registration are not permanently free**: do not create them solely because uploaded guide says 'must use'; use Amplify-provided domain for prototype, and mark requested Route53 custom DNS as deferred if $0 can't be guaranteed.
+- **No EC2 by default**: an always-on `t4g.micro` EC2 + EBS + public IPv4 and possible NAT/LB/RDS has ongoing costs and ARM64 compatibility concerns. Only use as explicitly approved fallback after price/architecture tests; cannot run vLLM dual T4 on it.
+
+**Track B — candidate for post-credit long-term cost minimization (larger refactor, not guaranteed $0):** Amplify Next.js + Lambda FastAPI + **DynamoDB** with provisioned always-free allowance + Cognito + optional S3/CloudFront, subject to current free plans and real traffic. DynamoDB has no SQL/RLS/joins; redesign workspace isolation, uniqueness, atomic job claim leases, sequence replay, retries, and schema migrations, with tests. Build a cost/complexity proof before choosing B. DO NOT swap database merely to label 'always free' without functional parity. All traffic/SSR/storage/network costs still require assessment.
+
+**Decision rule:** Preserve RDS and SQL for lowest engineering risk ONLY if $0-out-of-pocket risk is acceptable on verified Free-plan credit-backed experiment. If account is Paid or credits not sufficient, do not claim Track A free; offer Track B local refactor and a deployment block rather than provisioning. Do not promote trial/credit eligibility into perpetual no-cost promises.
+
+## 14.4 AWS repo/official documentation research, not code imports
+
+Relevant inspected repositories (source/reference only):
+- `https://github.com/aws-amplify/amplify-hosting` — SSR platform/hosting support, monorepo behaviors; consult Next.js supported feature list.
+- `https://github.com/aws-samples/amplify-next-template` — Next.js App Router sample; **do not replace the existing Enigma code with template**.
+- `https://github.com/awslabs/aws-lambda-web-adapter` and `https://github.com/aws/aws-lambda-web-adapter` — alternative FastAPI ASGI/Lambda packaging; choose one tested integration and check runtime/architecture/extension licensing.
+- `https://github.com/aws/aws-sam-cli` — optional SAM deployment tooling (but do not install new global tools without need/approval).
+- `https://github.com/awslabs/aws-cdk` — IaC reference; CDK uses Node/TypeScript or Python; do not duplicate infrastructure frameworks. Prefer minimal CloudFormation/SAM templates with documented no-cost validation.
+- `https://github.com/aws-samples/messenger-app-amplify` — chat UI/event patterns only; not a replacement LLM backend.
+- Official AWS Amplify SSR + monorepo docs, Free Tier/credit/route53/public IPv4 pricing, Lambda function URL permissions and AWS RDS pricing are authoritative over upload snapshots.
+
+## 14.5 Existing code migration plan (incremental, no rebuild)
+
+Phase 0. Audit `apps/web`, `apps/api`, `connector`, `packages/contracts`, `supabase`, tests, `.env.example`, `README.md`, `docs/TEST_REPORT.md`, local Git branch and current remote privacy. Enumerate actual Supabase/Clerk/Vercel touch points with file paths. `git status --short` currently has two untracked owner files: never delete/stage without review. Establish AWS account eligibility, budget and region FIRST; no write API.
+
+Phase 1. Add interfaces/adapters **without removing working Supabase/Clerk code until AWS replacement passes tests**: `AuthProvider` with Cognito, `WorkspaceStore`, `JobStore`, `MetricsStore`, `EventTransport`, `ArtifactStore`; ensure type contracts remain stable and preserve existing mock/test fixtures. Do not add a second irrelevant ORM. Prefer a PostgreSQL implementation for RDS and a separate experimental DynamoDB option only if approved.
+
+Phase 2. Replace Clerk-specific JWT and frontend UI/auth callback integration with Cognito; enforce application-level membership and tenant filtering on all API queries, on both web and FastAPI boundaries. Migrate test identities safely; do not assume Clerk user IDs equal Cognito `sub` values. Add full sign-up/sign-in/sign-out and dual-tenant tests, rate limits, anti-replay and CSRF protection where relevant.
+
+Phase 3. Database migration: inspect `supabase/migrations/0001_core_schema.sql`, `0002_job_functions.sql`, `supabase/verify/rls_two_tenant.sql`, and actual store; produce portable `infra/aws/sql/` migrations and SQL verification. Separate PostgreSQL-native tables/functions from Supabase JWT/RLS policies and Realtime. Implement least-privilege DB role, pooled connections/limits, bounded retention, tested atomic leases, ordered events and cross-workspace isolation. Test local PG18 before AWS; never touch `agentic_workspace` DB.
+
+Phase 4. Replace Supabase Realtime with bounded authenticated HTTP event polling (first implementation). Retain monotonic sequence replay, reconnect, backpressure, runtime offline display, token chunk labels, retry handling, API rate limits and final-message persistence. Use outbound HTTPS from Kaggle GPU connector, never publicly expose its localhost vLLM. Authenticate its scoped key, hash stored tokens, and cap telemetry frequency/size.
+
+Phase 5. Adapt FastAPI to Lambda Python 3.13, safe handler, IAM permissions, secrets, narrow CORS, runtime limits. Update Next.js 16 build for AWS Amplify Hosting monorepo `apps/web`; verify SSR/server actions/middleware and production build on supported runtime. Do not install GPU wheels or CUDA on AWS API runtime. Create minimal IaC and **read-only template validation** before any provisioning.
+
+Phase 6. With explicit approval and confirmed account plan/quota, provision only independently verified eligible resources one at a time with tags (`Project=Enigma`, `Environment=dev`, `Owner=...`), log resource IDs privately, show forecast, and define teardown. Test real AWS Cognito, database, secure API, private S3, Next.js browser, GPU relay, per-GPU NVML and real vLLM metrics. Do not claim anything deployed absent real endpoint test.
+
+Phase 7. Run existing Python test suite, TypeScript typecheck/lint, Next.js production build, Playwright 10 mock tests, security live tests and Kaggle build-5 acceptance independently. Preserve real user data; test live on dedicated Enigma resources only. Show actual status `DONE/BLOCKED/NOT RUN` for each stage and AWS services.
+
+Phase 8. Update `README.md`, `.env.example` (names only), `docs/AWS_ARCHITECTURE.md`, `docs/AWS_COST_MATRIX.md`, `docs/AWS_SECURITY.md`, `docs/AWS_DEPLOYMENT.md`, `docs/AWS_MIGRATION_REPORT.md`, `docs/TEST_REPORT.md`; mark Vercel notes as historical. Commit only reviewed code, docs and templates to private `stokastisk-ai/enigma` after a secrets scan. No force push, no unnecessary third-party telemetry.
+
+## 14.6 Secure environment and deployment requirements
+
+- Names are placeholders, never actual values in documentation or tracked files: `AWS_PROFILE`, `AWS_REGION`, `AWS_ACCOUNT_ID` (avoid committed account IDs), `ENIGMA_AUTH_PROVIDER=cognito`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`, `COGNITO_ISSUER_URL`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`, `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `ENIGMA_DB_DSN`, `ENIGMA_API_BASE_URL`, `ENIGMA_ARTIFACTS_BUCKET`, `ENIGMA_RUNTIME_TOKEN_SECRET` (only if actually used by code), `ENIGMA_ALLOWED_ORIGINS`. Browser-exposed variables must be intentional public identifiers only. Check exact names in implementation.
+- Use encrypted deployment environment mechanism, AWS IAM roles, least privilege, KMS defaults as appropriate; AWS Secrets Manager is **not always free** despite being credit-eligible. SSM Parameter Store Standard may have no additional charge within limits but validate APIs/features, and understand no secrets should leak via CloudFormation outputs or logs.
+- Never copy previously pasted Clerk/Gemini/database credentials; rotate secrets from earlier chat before any live integrations. Disable old providers only after AWS replacements are validated. No AWS access keys in GitHub or frontend; short-lived IAM identities. No payment/subscription upgrades without explicit approval.
+- No public RDS, no NAT gateway, ALB, EC2, EKS, Fargate, ECR, AppSync, Route53 public hosted zone, paid domain, Prometheus managed workspace, or CloudWatch custom metric emission merely because services appear in a Free Tier list. Each is explicitly blocked until shown free/credit-covered and approved.
+- Do not use Route53 in prototype if it incurs a recurring hosted-zone charge; document that the user's Route53 requirement conflicts with permanent $0. Expose a deployment URL only after real endpoint verification.
+- Clarify cloud-hosted API does not imply cloud GPU: AWS hosts Enigma's *control plane*; Kaggle hosts user-initiated GPU inference. An entire *GPU inference platform* cannot be on AWS at $0 using dual-T4 Kaggle GPUs. Do not provision AWS GPUs.
+
+## 14.7 Required AWS read-only CLI baseline and testing
+
+```
+cd /media/waqasm86/External1/Waqas-Projects/Project-Enigma/
+command -v python3.13 && python3.13 --version
+aws --version
+aws configure list-profiles
+aws sts get-caller-identity --query '{Arn:Arn}'
+git status --short
+git remote -v
+git ls-files | wc -l
+du -sh . apps/web/node_modules .git
+python3.13 -m pytest
+python3.13 scripts/smoke_e2e.py
+(cd apps/web && npm run build && npm run test:e2e)
+```
+
+Never print credentials or rely on an AWS CLI `--version` to establish authorization, plan, region, balance or free eligibility. Read-only AWS service listing commands must use `--region` and `--profile` explicitly once chosen; do not call provisioning commands without owner approval and cost matrix.
+
+## 14.8 Completion definition
+
+Enigma on AWS is *only* DONE when the same private project (a) builds on AWS Next.js host, (b) verifies Cognito claims and two-tenant boundaries, (c) uses AWS-backed durable database with atomic jobs, (d) exposes authenticated FastAPI service, (e) receives outbound real Stokastisk build-5 model chunks/GPU0+GPU1 NVML and native vLLM Prometheus metrics, (f) shows persistent history after Kaggle disconnects, (g) meets explicitly verified eligible pricing and account restrictions, and (h) has a cleanup/termination procedure. Otherwise state precise blockers; **do not invent a live deployment**.
+
+---
+
+# 15. ENIGMA AWS EXECUTION POLICY — LATEST AND HIGHEST PRECEDENCE (2026-11-21)
+
+This Section 15 is the current authoritative policy and overrides any conflicting text in Sections 1–14, historical Vercel, Supabase, Clerk and earlier AWS prompts. Do not discard historical sections or working code; mark superseded guidance as historical in documentation. Read this section **in full at every Claude Code session** through the root `CLAUDE.md` pointer. Do not claim this Markdown is auto-discovered independently.
+
+## 15.1 Identity, scope, hardware hard exclusions
+
+- Existing proprietary Enigma monorepo: `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/`; canonical source is PRIVATE `https://github.com/stokastisk-ai/enigma.git`. Preserve company ownership, Git history and all user files. No open-source license for Enigma. Separate PUBLIC repos `stokastisk-ai/stokastisk` (SDK) and `stokastisk-ai/stokastisk-ai.github.io` (SDK docs); do not change either public repo without a separate, concrete requested SDK/docs change, independent audit, tests and authorization. The user authorizes normal reviewed Enigma private Git commits/pushes under these rules; never force push, delete history, change repo visibility or delete unrelated remote files.
+- **NEVER use the laptop's NVIDIA GeForce 940M for ANY GPU processing.** No `nvidia-smi`, `pynvml.nvmlInit()`, local NVML test against physical device, CUDA probing, PyTorch CUDA, `torch.cuda`, `vllm`, NVIDIA driver changes, Nvidia container runtime, local GPU benchmark, local model loading, or local Stokastisk inference. No GPU diagnostics on this computer. GPU-related unit tests on localhost must use **fully synthetic fakes/mock fixtures** and must not initialize NVML implicitly. Device isolation is a hard requirement even for tests whose purpose is telemetry. Do not disable/modify laptop driver to comply. GPU health is **NOT tested locally**.
+- GPU validation is **only** in a user-launched, authorized Kaggle notebook session with exactly two Tesla T4 / SM75 GPUs, or another explicitly authorized remote T4 host. Kaggle only for personal evaluation in accord with its terms; no 24/7 paid commercial inference promise. Real Stokastisk build-5 acceptance remains unverified until executed remotely. Do not install Stokastisk/CUDA binaries into the Ubuntu web/API Python environment or AWS Lambda.
+- Use EXACT local Python executable `/usr/local/bin/python3.13` for all local Python and pip operations; verify executable path and `sys.executable` with `/usr/local/bin/python3.13 -c 'import sys; print(sys.executable)'`. `/usr/local/python3.13/bin/python3.13` may be checked for equivalence; choose `/usr/local/bin/python3.13` as canonical. Never switch to Python 3.14, `python`, `python3`, or `/usr/bin/python3` for Enigma code. AWS CLI 2's self-contained Python 3.14 runtime is NOT Enigma's Python interpreter; invoking the AWS CLI is allowed. Framework build tools may use their managed runtimes only after explicit compatibility verification. AWS Lambda runtime must specify `python3.13`.
+- Local tooling: `python3.13 -m pip`, `python3.13 -m pytest`, `python3.13 -m uvicorn`, npm with existing lockfile. Do not use `uv`, `ruff`, `venv`, `virtualenv`, Poetry, Pipenv, Conda or Go. Avoid `--break-system-packages`; use pip `--user` only after checking effects and approval. Do not run `pip install` from unverified URLs. Allowed to install specific pinned, vetted pip dependencies needed for the Enigma app and tests; inspect lock/pin and `pip check` first. Do not use pip to install GPU SDK or native CUDA wheels on Ubuntu.
+- Observability for GPUs: **only** `nvidia-ml-py`, `prometheus_client` and built-in Stokastisk/vLLM `/metrics`. On local Ubuntu, these modules may be statically imported for test harness only if importing has no GPU initialization, and tests mock all driver calls. AWS CloudWatch is permissible for AWS infrastructure logs with capped retention, not additional GPU instrumentation. No Grafana server, OpenTelemetry, CUDA profiler or proprietary monitoring agent.
+
+## 15.2 Actual local state and fact verification
+
+As of uploaded snapshot 2026-11-21 18:20 PKT: screenshot reports 788.9 MiB, 51,272 items, 47,169 files and 4,103 directories. Previous `du`: 718 MiB total, 714 MiB `apps/web/node_modules`, 1.9 MiB `.git`; earlier 157 tracked files. These are different snapshots. Fresh measurement required; never assume the GitHub repo has a 788.9 MB payload. New local inventory includes `infra/aws/sql/`, `infra/aws/template.yaml`, `apps/api/requirements-aws.txt`, `amplify.yml`, `docs/AWS_*`, and new tests. Uploaded README claims 167 pytest passing and 5 opt-in live Clerk tests skipped; this claim is not a fresh execution in this session. Use current source and tests; do not recreate the project.
+
+Read `README.md`, full `skills.md`, `CLAUDE.md`, `.claude/skills/enigma-aws-deploy/SKILL.md`, `docs/AWS_ARCHITECTURE.md`, `docs/AWS_COST_MATRIX.md`, `docs/AWS_SECURITY.md`, `docs/AWS_DEPLOYMENT.md`, `docs/AWS_MIGRATION_REPORT.md`, `docs/TEST_REPORT.md`, `infra/aws/`, `apps/web/`, `apps/api/`, `connector/`, `packages/contracts/`, `supabase/migrations/`, tests and `.env.example`. Audit existing code, not just prose summaries. Preserve working test doubles and legacy providers until AWS equivalents demonstrably pass.
+
+## 15.3 Git/GitHub execution authorization and hard guardrails
+
+The owner authorizes routine reviewed source uploads to **the existing PRIVATE** `stokastisk-ai/enigma` repository after tests and secret scan; no separate prompt is necessary for each ordinary non-destructive `git commit`/`git push` of Enigma changes. Verify **authenticated** repository identity and private visibility (`gh repo view stokastisk-ai/enigma --json isPrivate,nameWithOwner,viewerPermission` when `gh` is installed/authenticated; otherwise authenticated Git API), remote URL, branch, last common commit, and remote HEAD. If connector gets 404, treat access as unverified, not proof of deletion. Never reset/reinitialize `.git` or construct a new repository. No Git history rewriting, rebase of other people's work, forced update, changing branch protection, mass deletions, or deletion of other GitHub repos. Do not push to public Stokastisk/docs repos under this general Enigma authorization.
+
+**Before staging:** `git status --short`, `git diff --stat`, `git diff --check`, `git ls-files`, `git ls-files --others --exclude-standard`, inspect `git diff -- .gitignore`, verify `git check-ignore` on `node_modules`, `.next`, `.pytest_cache`, `.env.local`; run secret scanning across tracked *and staged* files and available history without printing values. Review actual deletion set (`git diff --name-status`) and prevent deletion of essential source. Use *explicit path* `git add` only for verified app source, SQL, IaC, docs, tests, lockfiles and instruction files; don't stage entire project indiscriminately. If a file is currently tracked but becomes unnecessary, use a normal audited `git rm --cached` only when keeping local copy is intended, or reviewed `git rm` for genuinely obsolete source with tests verifying no references. Never remove all remote files to 'replace' them; Git push only carries diffs, not node_modules. No `git clean -fdx`, `git reset --hard`, `git push --force`, `git filter-repo`, or broad `rm -rf`. Handle remote divergence by reporting/merging safely; do not overwrite unmerged changes.
+
+Existing untracked `CLAUDE_CLI_PROMPT.md`, `README_INSTALL.md`, and new AWS instructions must be examined deliberately. `node_modules`, pip cache, `.next*`, `.pytest_cache`, Playwright artifacts, credentials, model weights, zip archives, wheel files and telemetry dumps are not source and must never be committed. Existing `supabase/` migrations are historical but important; do not blindly delete them until AWS equivalence tests pass and archival plan exists.
+
+After the push, confirm private visibility, branch HEAD and commit SHA remotely. Report exact changed-file list, tested commands, failures, and push status. No claim of a successful upload based solely on `git status`.
+
+## 15.4 Strict AWS cost and deployment policy
+
+Owner wants **no AWS out-of-pocket charges**, no subscription, no paid addons, and AWS hosting instead of Vercel. Prior user AWS diagnostic reported a PAID account plan with a remaining promotional-credit balance; this is a historical snapshot, not live account data. AWS credits can expire; Free Tier eligibility depends on date, region, plan, service and aggregate consumption. AWS Free plan can expire after 6 months or credit exhaustion, while Paid plans can bill beyond allowances. Budget notifications are **not hard caps**. **Never create any billed resource or deploy without verifying current billing plan, credits, expiry, eligibility and exact downstream charges, and presenting the resource-specific residual risk for the user's explicit approval.** General permission to work on Enigma/GitHub and this instruction file is NOT permission to incur billing or provision chargeable AWS resources. If true zero-charge deployment cannot be demonstrated, stop provisioning and complete local migration, read-only checks, Git push and blocking report.
+
+Read-only AWS checks with installed CLI (`aws --version`), existing profile/role and region; do not create new IAM keys. Do NOT print access keys, tokens, full account number or secrets. Inspect Billing/Free Tier and Cost Explorer/credits through read-only API or user dashboard as available, and cite pricing pages in `docs/AWS_COST_MATRIX.md`. AWS CLI version alone proves nothing about AWS authorization. Region must be explicit for queries. Evaluate all cost components: Amplify SSR/build/egress, Lambda requests/duration/logs, Cognito MAU/tiers, PostgreSQL RDS instance/storage/backups, database networking/ENI/NAT/IPv4/egress, API Gateway or Lambda URLs, S3 requests/storage, Route53 zones/domain, CloudFront, CloudWatch, and any secrets manager/SSM fee. Avoid NAT gateways, public RDS/IPv4, EC2, Fargate/ECS/EKS, ALB, managed Prometheus and custom domains by default; avoid CloudFormation stacks until approved. Set log-retention and storage quotas before any launch. Tag planned resources and prepare a precise teardown script.
+
+**2026-11-21 compatibility alert:** Official AWS Amplify Next.js deployment guide currently explicitly documents SSR support for Next.js **12–15**, but Enigma uses **Next.js 16**. Do not silently downgrade Next.js or claim SSR compatibility; do an official documentation check and a supported non-billed build/package validation first. A real deploy requires compatibility proof; if it cannot be proven, report BLOCKED or propose a tested supported architecture, preserving UX and Next.js 16 wherever practical. Next.js 16 may require investigation of other adapters and cost implications; no silent rewrite.
+
+**Recommended staged architecture, not an assumption of free runtime:** AWS Amplify Hosting **if** Next 16 compatibility is verified, Python 3.13 FastAPI AWS Lambda via tested Mangum or Lambda Web Adapter, Cognito user pools, and existing PostgreSQL semantic behavior preserved on RDS **only if** affordable under verified account credits and approved. Secure authenticated inbound API and outbound polling from Kaggle; browser bounded polling instead of Supabase realtime initially. AWS Cognito `sub` IDs do not equal Clerk IDs; enforce tenant membership everywhere. Supabase RLS/auth helpers and Realtime do not run unchanged on plain PostgreSQL. DynamoDB is an optional separately tested redesign with conditional leases and tenant-index policy; never claim it is drop-in. Lambda Function URL `NONE` + CORS is not authentication. Consider route cost and actual authentication. Maintain exact job/streaming idempotency, ordered event replay, bounded metrics, retention and two-tenant isolation.
+
+**Zero-spend contradiction:** The complete commercial AWS hosting stack cannot be guaranteed permanently free at arbitrary usage, particularly SSR, PostgreSQL, public network and domain services. Always give a truthful blocked/conditional deployment status instead of promising zero dollars. Kaggle dual T4 is not AWS GPU capacity and cannot be sold as permanently available. Real AWS endpoint + real remote T4 acceptance are separate gates.
+
+## 15.5 AWS work plan and acceptance gates
+
+A. Inspect full local source, current AWS migration artifacts and Git; produce gap matrix and dependency graph. Verify local Python path first. Explicitly disable local GPU probe paths in tests and smoke commands; replace any physical NVML or `nvidia-smi` calls with mocks. Do **not** execute unsafe existing scripts until audited.
+B. Run unit/integration/SQL/browser tests using only CPU and synthetic GPU telemetry; compare to historical 167 pytest passed / five skipped / ten mock browser reported results. Run `npm run build`, typecheck, lint, applicable Playwright, dependency audit; log what truly ran. No local NVIDIA/torch CUDA calls.
+C. Integrate AWS Cognito, FastAPI Lambda Python 3.13 handler, verified Next.js deployment strategy, storage adapters (portable PostgreSQL functions and/or explicitly approved DynamoDB alternative), bounded HTTP polling, cloud authentication and no false metrics. Keep legacy providers behind opt-in flags until equivalence confirmed. Avoid refactoring SDK binary.
+D. Run AWS read-only account, quotas, pricing and IaC syntax checks; generate `docs/AWS_COST_MATRIX.md` with status `VERIFIED_FREE`/`CREDIT_ONLY`/`UNKNOWN`/`BLOCKED`, test deployment plan and teardown. Never interpret a successful CloudFormation template validation as proof of free cost or real deployment.
+E. If cost/compatibility checks **and** explicit deployment approval are present, provision narrowly and validate AWS actual endpoints for auth, tenant isolation, durable jobs, safety, browser and connector. Otherwise stop **only provisioning**, not local coding/testing/Git workflow.
+F. Separately provide an updated remote Kaggle build-5 notebook/checklist, **without executing it on laptop**. Confirm 2 Tesla T4 IDs, SM75, model, `/health`, `/metrics`, streamed completions, per-GPU telemetry and offline recovery in remote session. Do not claim done without actual Kaggle evidence.
+G. Document results: `README.md`, `docs/AWS_*`, `docs/TEST_REPORT.md`, `docs/SDK_INTEGRATION.md` and `BLOCKED_EXTERNAL_SETUP.md`; mark Vercel history. Keep a clear status for local changes, Git remote push, AWS account check, AWS deployment, Cognito, DB, Kaggle and end-to-end.
+
+## 15.6 Lean project + deletion safety
+
+Snapshot screenshot 788.9 MiB is **local directory**, not GitHub repository size. Most bytes came from npm dependencies previously; measure again, do not assume. Run `du -sh . .git apps/web/node_modules apps/web/.next 2>/dev/null`, `git ls-files | wc -l`, and list large non-node_modules files. Do not delete `node_modules` during active builds without specific authorization and validated `package-lock.json`. May remove known generated `.next`, `.next-e2e`, `.pytest_cache`, `test-results` after ensuring no active process needs them, documenting exact paths. Do not delete unknown untracked files, user drafts or Git history. Use `.gitignore` rather than deletion as primary upload-size control. Do not store downloaded GitHub reference repos or large model artifacts in Enigma.
+
+## 15.7 Final report contract
+
+For each run provide: (1) exact local Python interpreter and no-local-GPU assurance; (2) real baseline vs updated test counts; (3) exact Git files created/modified/deleted and remote visibility/commit verification; (4) AWS resources **created** (usually NONE until approved), region, price and limits, endpoint status; (5) Kaggle real GPU status (NOT RUN unless remotely evidenced); (6) unresolved blockers; (7) safe disk cleanups and what was preserved. Do not claim full AWS deployment if only adapters/IaC are implemented.

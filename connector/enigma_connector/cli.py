@@ -28,6 +28,9 @@ def build(cfg: Config) -> Connector:
         import os
         delay = float(os.environ.get("ENIGMA_MOCK_TOKEN_DELAY_S", "0.02"))        # slow it down to demo/test the Stop button
         return Connector(cfg, api, MockLlm(token_delay_s=delay, vllm=mv), MockGpu(), mv, spool, is_mock=True)
+    from .gpu import local_gpu_forbidden
+    if local_gpu_forbidden():
+        raise SystemExit("refusing --mode stokastisk: ENIGMA_FORBID_LOCAL_GPU=1 (real GPU work runs only on an authorised remote GPU host)")
     try:
         gpu = NvmlSampler()
     except NvmlUnavailable as e:

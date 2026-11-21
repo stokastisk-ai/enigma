@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:unit": "node --test lib/server/cognito.test.ts",
     "test:e2e": "npm run build:e2e && playwright test",
     "gen:api": "openapi-typescript ../../packages/contracts/openapi.json -o ../../packages/contracts/src/api.d.ts",
     "build:e2e": "ENIGMA_DIST_DIR=.next-e2e NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= NEXT_PUBLIC_SUPABASE_URL= next build",

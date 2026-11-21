@@ -86,8 +86,8 @@ def verify_runtime_token(store: Any, token: str, now: datetime | None = None) ->
 # ---------------------------------------------------------------- user tokens
 @dataclass(frozen=True)
 class UserIdentity:
-    user_id: str          # Clerk `sub`
-    auth: str             # "clerk" | "dev"
+    user_id: str          # provider-namespaced subject: Clerk `sub` as-is (historical), Cognito `cognito:<sub>`; never assume equal across providers
+    auth: str             # "clerk" | "cognito" | "dev"
 
 
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
@@ -98,6 +98,31 @@ class UserVerifier:
         self.s = settings
         self._resolver = key_resolver
         self._jwk_client: jwt.PyJWKClient | None = None
+
+    def _verify_cognito(self, token: str) -> "UserIdentity":
+        """Cognito user-pool JWT: RS256, issuer pinned to the pool, expiry, ``token_use`` and app-client binding all enforced.
+
+        access tokens carry ``client_id`` (no ``aud``); id tokens carry ``aud`` (= client id). Either way the client id must be ours,
+        so a token minted for another app client or pool is refused.
+        """
+        unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
+        s = self.s
+        if not (s.cognito_issuer and s.cognito_app_client_id):
+            raise unauthorized
+        if self._resolver:
+            key = self._resolver(token)
+        else:
+            if not self._jwk_client:
+                self._jwk_client = jwt.PyJWKClient(s.cognito_jwks_url, cache_keys=True, lifespan=3600, timeout=5)
+            key = self._jwk_client.get_signing_key_from_jwt(token).key
+        claims = jwt.decode(token, key, algorithms=["RS256"], issuer=s.cognito_issuer,
+                            options={"require": ["exp", "iat", "sub", "iss"], "verify_aud": False})
+        if claims.get("token_use") != s.cognito_token_use:
+            raise unauthorized
+        client = claims.get("aud") if s.cognito_token_use == "id" else claims.get("client_id")
+        if client != s.cognito_app_client_id:
+            raise unauthorized
+        return UserIdentity(f"cognito:{claims['sub']}", "cognito")
 
     def _signing_key(self, token: str) -> Any:
         if self._resolver:
@@ -123,6 +148,8 @@ class UserVerifier:
                 return UserIdentity(str(claims["sub"]), "dev")
             if alg != "RS256":
                 raise unauthorized
+            if self.s.auth_provider == "cognito":
+                return self._verify_cognito(token)
             if not self.s.clerk_issuer and not self._resolver:
                 raise unauthorized
             claims = jwt.decode(token, self._signing_key(token), algorithms=["RS256"], issuer=self.s.clerk_issuer or None,

@@ -1,0 +1,9 @@
+# AWS Lambda (Python 3.13) deployment package for apps/api. NO torch / vllm / stokastisk / CUDA / nvidia-ml-py here.
+# Pure-Python wheels or manylinux wheels only; build for the Lambda architecture chosen in infra/aws (x86_64 default).
+fastapi==0.163.1
+pydantic==2.14.3
+pydantic-settings==2.16.3
+httpx==0.28.1
+PyJWT[crypto]==2.15.1
+psycopg[binary]==3.3.9
+mangum==0.22.0

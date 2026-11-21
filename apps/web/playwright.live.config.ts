@@ -28,7 +28,7 @@ export default defineConfig({
   projects: [{ name: "live", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],
   webServer: [
     {
-      command: "python3.13 -m uvicorn index:app --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning",
+      command: "/usr/local/bin/python3.13 -m uvicorn index:app --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning",
       cwd: root,
       url: "http://127.0.0.1:8787/api/v1/health",
       reuseExistingServer: false,

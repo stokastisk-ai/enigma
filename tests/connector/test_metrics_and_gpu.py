@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import urllib.error
 from pathlib import Path
@@ -158,8 +159,9 @@ def test_nvml_init_failure_is_reported_not_fatal():
         NvmlSampler(FakeNvml(fail_init=True))
 
 
-def test_real_nvml_on_this_host_if_present():
-    """Runs against the real NVIDIA driver when one exists (any GPU generation). Asserts shape + physical plausibility only."""
+@pytest.mark.skipif(os.environ.get("ENIGMA_REMOTE_GPU_HOST") != "1", reason="REMOTE-ONLY: touches a physical GPU. Never run on the dev laptop; used on the authorised Kaggle T4 host")
+def test_real_nvml_on_remote_gpu_host_only():
+    """REMOTE ONLY (ENIGMA_REMOTE_GPU_HOST=1 on the authorised Kaggle host). Asserts shape + physical plausibility only."""
     try:
         s = NvmlSampler()
     except NvmlUnavailable:

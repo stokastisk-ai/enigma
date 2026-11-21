@@ -83,7 +83,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
     if problems:
         raise RuntimeError("refusing to start with unsafe configuration: " + "; ".join(problems))
     if store is None:
-        if s.store == "supabase":
+        if s.store == "postgres":
+            from .store.postgres import PostgresStore
+            store = PostgresStore(s.db_dsn)
+        elif s.store == "supabase":
             from .store.supabase import SupabaseStore
             store = SupabaseStore(s.supabase_url, s.supabase_service_role_key)
         else:

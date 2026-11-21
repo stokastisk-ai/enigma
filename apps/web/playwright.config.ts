@@ -24,11 +24,11 @@ export default defineConfig({
   projects: [{ name: "desktop", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],
   webServer: [
     {
-      command: `python3.13 -m uvicorn index:app --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning`,
+      command: `/usr/local/bin/python3.13 -m uvicorn index:app --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning`,
       cwd: root,
       url: `${API}/api/v1/health`,
       reuseExistingServer: false,
-      env: { ENIGMA_ENV: "development", ENIGMA_DEV_AUTH: "true", ENIGMA_DEV_JWT_SECRET: SECRET, CRON_SECRET: "c".repeat(32), ENIGMA_RUNTIME_ONLINE_S: "4", ENIGMA_RUNTIME_STALE_S: "8", PYTHONDONTWRITEBYTECODE: "1" },
+      env: { ENIGMA_ENV: "development", ENIGMA_DEV_AUTH: "true", ENIGMA_DEV_JWT_SECRET: SECRET, CRON_SECRET: "c".repeat(32), ENIGMA_RUNTIME_ONLINE_S: "4", ENIGMA_RUNTIME_STALE_S: "8", PYTHONDONTWRITEBYTECODE: "1", ENIGMA_FORBID_LOCAL_GPU: "1" },
     },
     {
       command: "npx next start -p 3100 -H 127.0.0.1",
