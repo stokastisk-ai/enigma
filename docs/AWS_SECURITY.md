@@ -33,3 +33,14 @@
 - **Tests cannot reach the network:** a session-wide guard (`tests/conftest.py`) refuses every non-loopback socket and DNS lookup, so no test can contact AWS regardless of credentials; DynamoDB tests also run with fake credentials and assert moto is active.
 - **No AWS GPU / hosted-AI path exists** in IaC, Lambda requirements, backend or web code; `tests/test_no_aws_gpu.py` fails the build if one appears. Root-key remediation and a deny-by-policy deployer: `docs/AWS_ROOT_KEY_REMEDIATION.md`.
 - **DynamoDB:** table has no GSI; policy allows only the data-plane actions on one table and denies update/delete on audit rows; no row-level security exists (isolation is application-layer, as with PostgreSQL).
+
+
+## Updated 2026-11-21 (dashboard, Lambda package, Cognito attacks)
+- **Empty/odd `sub` was accepted** (found by a new test): a validly signed token with `sub: ""` produced the identity `cognito:`, so every such token would share one tenant. The subject is now validated (`[A-Za-z0-9_-]{1,128}`, no `:` so the `cognito:` namespace cannot be forged), for Cognito and Clerk. Cognito never issues such tokens; this is defence in depth.
+- **Cognito header/claim attacks now tested:** attacker-supplied `jwk`, `jku`, `x5u`, `x5c`, `crit` headers are never used or followed; hostile or near-miss `kid`s (path traversal, NUL, case, 1 KB, SQL-ish) are refused; future `nbf` and missing `exp` refused; near-miss `iss` (trailing slash, case, other region/pool) and `client_id` refused; the 401 never leaks verifier internals (no signature/kid/JWKS/issuer oracle).
+- **Admin AWS page:** default-deny on the backend (401 anonymous, 403 non-admin, exact-match admin ids); read-only; six whitelisted AWS calls; ids only from a validated manifest; scrubbed output; TTL cache and rate limit; the browser never holds AWS credentials or sees ARNs/account ids/cost data. See `AWS_OPERATIONS_DASHBOARD.md`.
+- **CDN safety:** the web middleware's 401 and redirect now carry `Cache-Control: no-store`, so a CDN cannot cache an auth decision and replay it to another viewer (found by the local CloudFront-style proxy check).
+- **Lambda package:** zero native binaries; no `.env` file; the local ignored secrets are not present in the bundle (checked by value, not printed).
+- **Deployer policy** (`infra/aws/iam/enigma-deployer-policy.json`, unapplied) makes the rules technical: explicit **Deny** on SageMaker, Bedrock, EC2 instances/fleets, ECS/EKS/Batch, NAT, Route 53, Secrets Manager, X-Ray, RUM, Synthetics, `PutMetricData`, Cost Explorer, access-key/user creation, Organizations and SSO. Unreviewed until you review it.
+- **Latent a11y bug fixed:** the shared chart wrapper nested an interactive `<details>` inside `role="img"` (axe `nested-interactive`) for every chart with data.
+- **Still true:** AWS access is root-only and root access keys exist; nothing was changed. A real Cognito pool, real CloudFront/Lambda Web Adapter and the live admin page have never been run.

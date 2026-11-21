@@ -1,0 +1,9 @@
+{
+  "region": "us-east-1",
+  "environment": "dev",
+  "web_function": "enigma-web-dev",
+  "api_function": "enigma-api-dev",
+  "ddb_table": "enigma-dev",
+  "cloudfront_distribution_id": "E1EXAMPLE12345",
+  "user_pool_id": "us-east-1_ExamplePool"
+}

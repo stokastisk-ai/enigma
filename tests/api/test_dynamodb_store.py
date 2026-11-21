@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
+import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 
 import boto3
 import pytest
@@ -32,7 +35,11 @@ from enigma_api.store.dynamodb import DynamoStore
 from enigma_api.store.memory import MemoryStore
 from enigma_api.store.supabase import StoreUnavailable
 
-TABLE = "enigma-test"
+# OPTIONAL real-table parity run (OFF by default; needs owner approval + a NON-ROOT identity + a throwaway table; see docs/AWS_DYNAMODB_REAL_PARITY.md).
+# When ENIGMA_LIVE_DDB=1 the SAME tests run against the real table named in ENIGMA_LIVE_DDB_TABLE instead of moto, after tests/live_ddb_guard.py has proven
+# that the target is a throwaway `enigma-parity-*` table, the caller is not root and the region is the approved one. Never part of the default suite.
+LIVE = os.environ.get("ENIGMA_LIVE_DDB") == "1"
+TABLE = os.environ.get("ENIGMA_LIVE_DDB_TABLE", "") if LIVE else "enigma-test"
 
 
 class SpyClient:
@@ -62,8 +69,49 @@ class SpyClient:
         return wrapped
 
 
+def _clear_table(c) -> None:
+    """Delete every item of the (guard-approved, throwaway) table so each test starts empty. Only ever called after assert_safe_live_target."""
+    start = None
+    while True:
+        r = c.scan(TableName=TABLE, ConsistentRead=True, ProjectionExpression="PK, SK", **({"ExclusiveStartKey": start} if start else {}))
+        items = r.get("Items", [])
+        for i in range(0, len(items), 25):
+            c.batch_write_item(RequestItems={TABLE: [{"DeleteRequest": {"Key": {"PK": it["PK"], "SK": it["SK"]}}} for it in items[i:i + 25]]})
+        start = r.get("LastEvaluatedKey")
+        if not start:
+            return
+
+
+def _ddb_live():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))        # tests/ (holds live_ddb_guard.py)
+    from live_ddb_guard import LiveTargetRefused, assert_safe_live_target
+    try:
+        profile, region = os.environ["ENIGMA_LIVE_DDB_PROFILE"], os.environ["ENIGMA_LIVE_DDB_REGION"]
+    except KeyError as e:
+        pytest.fail(f"live mode needs {e.args[0]}")
+    sess = boto3.Session(profile_name=profile, region_name=region)
+    arn = sess.client("sts").get_caller_identity()["Arn"]
+    c = sess.client("dynamodb")
+    try:
+        d = c.describe_table(TableName=TABLE)["Table"]
+        tags = {t["Key"]: t["Value"] for t in c.list_tags_of_resource(ResourceArn=d["TableArn"]).get("Tags", [])}
+        assert_safe_live_target(identity_arn=arn, table_name=TABLE, table_status=d["TableStatus"], item_count=d.get("ItemCount"), tags=tags, region=region,
+                                approved_region=os.environ.get("ENIGMA_LIVE_DDB_APPROVED_REGION"), env=dict(os.environ))
+    except LiveTargetRefused as e:
+        pytest.fail(str(e))
+    _clear_table(c)
+    yield c
+
+
 @pytest.fixture
 def ddb(monkeypatch):
+    if LIVE:
+        yield from _ddb_live()
+    else:
+        yield from _ddb_moto(monkeypatch)
+
+
+def _ddb_moto(monkeypatch):
     for k in ("AWS_PROFILE", "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
@@ -84,7 +132,11 @@ def ddb(monkeypatch):
 
 @pytest.fixture
 def clock():
-    return Clock()
+    c = Clock()
+    if LIVE:                                                    # a real table's TTL must not see "past" expiry times
+        from datetime import datetime, timezone
+        c.t = datetime.now(timezone.utc)
+    return c
 
 
 @pytest.fixture
@@ -348,11 +400,12 @@ def test_data_is_durable_across_store_instances_and_offline_history_remains(ddb,
 def test_credential_secret_hash_is_never_listed_and_plain_secret_never_stored(ddb, client):
     a = Tenant(client, "user_alice")
     a.create_runtime()
-    secret = a.token.rsplit("_", 1)[1]
+    secret = "_".join(a.token.split("_")[3:])                         # enig_rt_<prefix>_<43-char secret>; the secret is url-safe base64 and MAY contain "_"
+    assert len(secret) == 43
     listed = client.get(f"/api/v1/app/runtimes/{a.runtime_id}/credentials", headers=a.h).text
     assert secret not in listed and "secret_hash" not in listed
     blob = str(ddb.scan(TableName=TABLE, ConsistentRead=True)["Items"])
-    assert secret not in blob and hashlib.sha256(secret.encode()).hexdigest() in blob           # only the hash is persisted
+    assert secret not in blob and a.token not in blob and hashlib.sha256(secret.encode()).hexdigest() in blob           # only the hash is persisted
 
 
 def test_batchget_chunking_beyond_100_keys(store):
@@ -453,3 +506,220 @@ def test_create_app_builds_a_dynamodb_store_from_settings_and_serves_requests(dd
         t = Tenant(c, "user_alice")
         assert t.workspace_id and c.get("/api/v1/app/workspaces", headers=t.h).json()["items"][0]["id"] == t.workspace_id
         assert isinstance(app.state.enigma.store, DynamoStore)
+
+
+# ================================================================ strengthened parity checks (pagination, retries, conflicts, leases, TTL)
+class PagingClient:
+    """Forces DynamoDB-style pagination: every Query returns at most ``page`` items plus LastEvaluatedKey, whatever the caller asked for,
+    and BatchGet/BatchWrite hand back half of the work as Unprocessed*. Exercises the store's continuation loops deterministically."""
+
+    def __init__(self, inner, page=7):
+        self._i, self.page, self.queries, self.unprocessed_seen = inner, page, 0, 0
+        self._lock = threading.RLock()
+
+    def __getattr__(self, name):
+        fn = getattr(self._i, name)
+        if name == "query":
+            def q(**kw):
+                self.queries += 1
+                kw["Limit"] = min(kw.get("Limit", 10_000), self.page)
+                return fn(**kw)
+            return q
+        if name == "batch_get_item":
+            def bg(**kw):
+                tbl = next(iter(kw["RequestItems"]))
+                keys = kw["RequestItems"][tbl]["Keys"]
+                if len(keys) > 1:
+                    half = len(keys) // 2
+                    first = fn(RequestItems={tbl: {**kw["RequestItems"][tbl], "Keys": keys[:half]}})
+                    first["UnprocessedKeys"] = {tbl: {**kw["RequestItems"][tbl], "Keys": keys[half:]}}
+                    self.unprocessed_seen += 1
+                    return first
+                return fn(**kw)
+            return bg
+        if name == "batch_write_item":
+            def bw(**kw):
+                tbl = next(iter(kw["RequestItems"]))
+                reqs = kw["RequestItems"][tbl]
+                if len(reqs) > 1:
+                    half = len(reqs) // 2
+                    fn(RequestItems={tbl: reqs[:half]})
+                    self.unprocessed_seen += 1
+                    return {"UnprocessedItems": {tbl: reqs[half:]}}
+                return fn(**kw)
+            return bw
+        return fn
+
+
+def _job(st, key="k-pg-12345"):
+    ws = st.create_workspace("u1", "W", "w")["workspace"]
+    pr = st.list_projects(ws["id"])[0]
+    rt = st.create_runtime(ws["id"], pr["id"], "rt", True, "u1")
+    cv = st.create_conversation(ws["id"], pr["id"], "u1", "c", rt["id"])
+    st.submit_job(ws["id"], cv["id"], rt["id"], "u1", key, "go", {"max_tokens": 8, "temperature": 0.1}, 100000)
+    return ws, pr, rt, cv, st.claim_job(rt["id"], "o", 120)
+
+
+def test_events_pagination_returns_everything_in_order_and_honours_limit_and_cursor(ddb, clock):
+    pc = PagingClient(ddb, page=7)
+    st = DynamoStore(TABLE, client=pc, clock=clock)
+    _ws, _pr, rt, _cv, job = _job(st)
+    for start in range(1, 241, 60):                                                    # 240 events in four appends of 60 (<= 64 per request)
+        assert st.append_events(rt["id"], job["id"], "o", [{"event_seq": i, "kind": "delta", "text": f"t{i};"} for i in range(start, start + 60)], 120)["ok"]
+    allev = st.list_events(job["id"], 0, 1000)
+    assert [e["event_seq"] for e in allev] == list(range(1, 241)) and pc.queries > 30      # many pages were followed
+    assert [e["event_seq"] for e in st.list_events(job["id"], 100, 5)] == [101, 102, 103, 104, 105]      # cursor + limit across page boundaries
+    assert st.list_events(job["id"], 240, 10) == []
+    assert st.complete_job(rt["id"], job["id"], "o", 240, hashlib.sha256("".join(f"t{i};" for i in range(1, 241)).encode()).hexdigest(), {})["ok"]   # text rebuilt across pages
+
+
+def test_message_and_telemetry_queries_paginate(ddb, clock):
+    pc = PagingClient(ddb, page=5)
+    st = DynamoStore(TABLE, client=pc, clock=clock)
+    ws, pr, rt, cv, _ = _job(st)
+    st.register_runtime(rt["id"], {"served_model": "m", "tp": 1, "pp": 1, "max_model_len": 2048, "gpus": [], "capabilities": {}, "sdk": {}})
+    t0 = clock()
+    rows = [{"captured_at": (t0 + timedelta(seconds=i)).isoformat(), "gpu_index": i % 2, "util_gpu_pct": float(i)} for i in range(61)]
+    assert st.ingest_telemetry(rt["id"], "page-batch-0001", None, rows, [])["gpu_rows"] == 61
+    got = st.query_gpu(pr["id"], None, t0 - timedelta(seconds=1), t0 + timedelta(minutes=5), 1000)
+    assert len(got) == 61 and [g["util_gpu_pct"] for g in got] == [float(i) for i in range(61)] and pc.queries > 10
+    assert len(st.query_gpu(pr["id"], rt["id"], t0, t0 + timedelta(minutes=5), 10)) == 10      # filtered + limited query still terminates correctly
+    assert len(st.list_messages(cv["id"], limit=200)) == 1
+
+
+def test_unprocessed_keys_and_items_are_retried_until_complete(ddb, clock):
+    pc = PagingClient(ddb)
+    st = DynamoStore(TABLE, client=pc, clock=clock)
+    w = st.create_workspace("alice", "A", "alpha")["workspace"]["id"]
+    for i in range(37):
+        st.create_project(w, f"p{i}", "alice")
+    assert len(st.list_projects(w)) == 38 and pc.unprocessed_seen > 0                  # BatchGetItem continuation
+    ws, pr, rt, _cv, _ = _job(st)
+    t0 = clock()
+    rows = [{"captured_at": (t0 + timedelta(seconds=i)).isoformat(), "gpu_index": 0, "util_gpu_pct": 1.0} for i in range(60)]
+    before = pc.unprocessed_seen
+    assert st.ingest_telemetry(rt["id"], "unproc-batch-1", None, rows, [])["gpu_rows"] == 60
+    assert pc.unprocessed_seen > before                                                # BatchWriteItem continuation
+    assert len(st.query_gpu(pr["id"], None, t0, t0 + timedelta(minutes=2), 1000)) == 60       # nothing lost
+
+
+def test_transaction_conflicts_and_conditional_failures_are_retried_without_duplicates(spy, clock):
+    st = DynamoStore(TABLE, client=spy, clock=clock)
+    ws = st.create_workspace("u1", "W", "w")["workspace"]
+    pr = st.list_projects(ws["id"])[0]
+    rt = st.create_runtime(ws["id"], pr["id"], "rt", True, "u1")
+    cv = st.create_conversation(ws["id"], pr["id"], "u1", "c", rt["id"])
+    # 1) a concurrent writer holds the items: TransactionConflict twice, then success
+    spy.fail["transact_write_items"] = {"code": "TransactionCanceledException", "left": 2, "extra": {"CancellationReasons": [{"Code": "TransactionConflict"}] * 8}}
+    r = st.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-conf-12345", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)
+    assert r["ok"] and len([m for m in st.list_messages(cv["id"]) if m["role"] == "user"]) == 1
+    # 2) the runtime/user lock condition fails once (another submit won): the store re-reads and succeeds, still exactly one new job
+    spy.fail.clear()
+    spy.fail["transact_write_items"] = {"code": "TransactionCanceledException", "left": 1, "extra": {"CancellationReasons": [{"Code": "ConditionalCheckFailed"}] + [{"Code": "None"}] * 7}}
+    r2 = st.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-conf-67890", "q", {"max_tokens": 8, "temperature": 0.1}, 1000)
+    assert r2["ok"] and r2["job_id"] != r["job_id"]
+    spy.fail.clear()
+    assert len([m for m in st.list_messages(cv["id"]) if m["role"] == "user"]) == 2
+    # 3) a permanent conflict ends in a clean error, never a half-written job
+    spy.fail["transact_write_items"] = {"code": "TransactionCanceledException", "left": -1, "extra": {"CancellationReasons": [{"Code": "TransactionConflict"}] * 8}}
+    with pytest.raises(StoreUnavailable) as e:                                         # a different user: u1 is already at its 2-active-job cap
+        st.submit_job(ws["id"], cv["id"], rt["id"], "u2", "k-conf-99999", "r", {"max_tokens": 8, "temperature": 0.1}, 1000)
+    assert "k-conf-99999" not in str(e.value)
+    spy.fail.clear()
+    assert [m["content"] for m in st.list_messages(cv["id"])] == ["p", "q"]                # nothing half-written
+
+
+def test_throttling_during_claim_is_retried_and_the_job_is_claimed_once(spy, clock):
+    st = DynamoStore(TABLE, client=spy, clock=clock)
+    ws = st.create_workspace("u1", "W", "w")["workspace"]
+    pr = st.list_projects(ws["id"])[0]
+    rt = st.create_runtime(ws["id"], pr["id"], "rt", True, "u1")
+    cv = st.create_conversation(ws["id"], pr["id"], "u1", "c", rt["id"])
+    st.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-thr-12345", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)
+    spy.fail["transact_write_items"] = {"code": "ProvisionedThroughputExceededException", "left": 3}
+    spy.fail["update_item"] = {"code": "ThrottlingException", "left": 2}
+    j = st.claim_job(rt["id"], "owner", 30)
+    assert j and j["attempt"] == 1
+    spy.fail.clear()
+    assert st.claim_job(rt["id"], "other", 30) is None
+
+
+def test_runtime_active_job_cap_holds_across_different_users(spy, clock):
+    st = DynamoStore(TABLE, client=spy, clock=clock)
+    ws = st.create_workspace("owner", "W", "w")["workspace"]
+    pr = st.list_projects(ws["id"])[0]
+    rt = st.create_runtime(ws["id"], pr["id"], "rt", True, "owner")
+    cv = st.create_conversation(ws["id"], pr["id"], "owner", "c", rt["id"])
+    ok = 0
+    for u in range(6):
+        st.add_member(ws["id"], f"user{u}", "member")
+        for k in range(2):                                                             # 2 active per user is allowed; the runtime cap (4) must stop us first
+            r = st.submit_job(ws["id"], cv["id"], rt["id"], f"user{u}", f"key-{u}-{k}-abcdef", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)
+            ok += 1 if r.get("ok") else 0
+            if not r.get("ok"):
+                assert r["error"] == "too_many_jobs"
+    assert ok == 4
+
+
+def test_expiry_and_cancel_transitions_with_the_injected_clock(store, clock):
+    ws = store.create_workspace("u1", "W", "w")["workspace"]
+    pr = store.list_projects(ws["id"])[0]
+    rt = store.create_runtime(ws["id"], pr["id"], "rt", True, "u1")
+    cv = store.create_conversation(ws["id"], pr["id"], "u1", "c", rt["id"])
+    a = store.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-exp-aaaaaa", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)["job_id"]
+    clock.advance(601)                                                                  # pending past its 10-minute deadline
+    assert store.get_job(a)["status"] == "expired" and store.claim_job(rt["id"], "o", 30) is None
+    b = store.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-exp-bbbbbb", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)["job_id"]
+    store.claim_job(rt["id"], "o", 30)
+    assert store.request_cancel(ws["id"], b)["status"] == "cancel_requested"
+    clock.advance(31)                                                                   # nobody acks and the lease is gone
+    assert store.get_job(b)["status"] == "cancelled"
+    c = store.submit_job(ws["id"], cv["id"], rt["id"], "u1", "k-exp-cccccc", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)["job_id"]
+    assert store.claim_job(rt["id"], "o1", 30)["attempt"] == 1
+    clock.advance(31)
+    assert store.claim_job(rt["id"], "o2", 30)["attempt"] == 2                          # lease expired, one attempt left: re-claimed
+    clock.advance(31)
+    assert store.claim_job(rt["id"], "o3", 30) is None and store.get_job(c)["status"] == "failed" and store.get_job(c)["error_code"] == "lease_expired"
+
+
+def test_ttl_is_lazy_so_correctness_never_depends_on_it(store, clock, client):
+    a = Tenant(client, "user_alice")
+    a.create_runtime(); a.register()
+    conv = a.conversation()
+    job = a.submit(conv, "p").json()["job_id"]
+    a.claim(); a.events(job, [{"event_seq": 1, "kind": "delta", "text": "x"}])
+    client.post(f"/api/v1/jobs/{job}/complete", headers=a.rh, json={"final_seq": 1, "text_sha256": sha("x")})
+    clock.advance(30 * 86400)                                                           # far beyond every ttl: real DynamoDB may not have deleted anything yet (up to ~48 h lag)
+    assert [e["event_seq"] for e in store.list_events(job, 0, 10)] == [1]               # still readable and consistent: reads never filter on ttl
+    assert store.get_job(job)["status"] == "succeeded"
+    assert store.prune()["events"] == 1 and store.list_events(job, 0, 10) == []         # exact deletion happens only when prune runs (or when AWS TTL gets to it)
+
+
+def test_conflicting_idempotency_key_across_conversations_is_rejected(store):
+    ws = store.create_workspace("u1", "W", "w")["workspace"]
+    pr = store.list_projects(ws["id"])[0]
+    rt = store.create_runtime(ws["id"], pr["id"], "rt", True, "u1")
+    c1 = store.create_conversation(ws["id"], pr["id"], "u1", "c1", rt["id"])
+    c2 = store.create_conversation(ws["id"], pr["id"], "u1", "c2", rt["id"])
+    assert store.submit_job(ws["id"], c1["id"], rt["id"], "u1", "same-key-abcdef", "p", {"max_tokens": 8, "temperature": 0.1}, 1000)["ok"]
+    assert store.submit_job(ws["id"], c2["id"], rt["id"], "u1", "same-key-abcdef", "p", {"max_tokens": 8, "temperature": 0.1}, 1000) == {"error": "idempotency_conflict"}
+
+
+def test_batch_read_never_returns_a_silently_truncated_result(ddb, clock):
+    """If DynamoDB keeps returning UnprocessedKeys, the store must fail loudly (503-class), not hand back a partial list."""
+    class NeverFinishes:
+        def __init__(self, inner): self._i = inner
+        def __getattr__(self, n):
+            fn = getattr(self._i, n)
+            if n != "batch_get_item":
+                return fn
+            def bg(**kw):
+                tbl = next(iter(kw["RequestItems"]))
+                return {"Responses": {tbl: []}, "UnprocessedKeys": {tbl: kw["RequestItems"][tbl]}}      # processes nothing, ever
+            return bg
+    st = DynamoStore(TABLE, client=ddb, clock=clock)
+    w = st.create_workspace("alice", "A", "alpha")["workspace"]["id"]
+    st.create_project(w, "p1", "alice")
+    stuck = DynamoStore(TABLE, client=NeverFinishes(ddb), clock=clock)
+    with pytest.raises(StoreUnavailable, match="incomplete"):
+        stuck.list_projects(w)

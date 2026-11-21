@@ -14,7 +14,9 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // Opt-in self-contained Node server bundle (.next-standalone/standalone/server.js) for a Lambda Web Adapter / container-less host.
   // Used only to validate the AWS alternative while Amplify Hosting does not document Next.js 16; the default build is unchanged.
-  ...(process.env.ENIGMA_STANDALONE === "1" ? { output: "standalone" as const } : {}),
+  // images.unoptimized: Enigma uses no next/image, and without it Next does not bundle the native `sharp` (x86_64-only) binary, so the package is
+  // pure JavaScript and runs on either Lambda architecture. Re-enable optimisation (and pick the architecture deliberately) if next/image is ever added.
+  ...(process.env.ENIGMA_STANDALONE === "1" ? { output: "standalone" as const, images: { unoptimized: true }, outputFileTracingExcludes: { "*": ["node_modules/sharp/**", "node_modules/@img/**"] } } : {}),
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },

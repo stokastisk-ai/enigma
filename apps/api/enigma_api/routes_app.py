@@ -71,8 +71,9 @@ def _issue(st: AppState, rt: dict, user: UserIdentity, days: int, rotated_from: 
 
 
 @router.get("/me")
-def me(user: User):
-    return {"user_id": user.user_id, "auth": user.auth}
+def me(request: Request, user: User):
+    from .routes_ops import is_admin
+    return {"user_id": user.user_id, "auth": user.auth, "is_admin": is_admin(request, user)}
 
 
 # ------------------------------------------------------------------ tenancy

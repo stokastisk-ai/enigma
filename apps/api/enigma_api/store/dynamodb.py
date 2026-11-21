@@ -202,17 +202,24 @@ class DynamoStore(Store):
         return out[:limit] if limit is not None else out
 
     def _batch_get(self, keys: list[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+        """Consistent BatchGetItem for any number of keys. UnprocessedKeys (returned under throttling) are retried with backoff; if work is
+        still left after the retry budget this RAISES instead of returning a partial result (a silently truncated list is worse than an error)."""
         found: dict[tuple[str, str], dict] = {}
         uniq = list(dict.fromkeys(keys))
         for i in range(0, len(uniq), 100):
             req = {self.table: {"Keys": [_key(*k) for k in uniq[i:i + 100]], "ConsistentRead": True}}
-            for _ in range(6):
+            delay = 0.005
+            for attempt in range(12):
                 r = self._call("batch_get_item", RequestItems=req)
                 for it in r.get("Responses", {}).get(self.table, []):
                     found[(it["PK"]["S"], it["SK"]["S"])] = it
                 req = r.get("UnprocessedKeys") or {}
                 if not req:
                     break
+                time.sleep(min(delay, 0.2) * (1 + random.random()))
+                delay *= 2
+            else:
+                raise StoreUnavailable("database throttled: batch read incomplete")
         return found
 
     def _refs(self, pointers: list[dict], prefix: str) -> list[dict]:

@@ -52,3 +52,25 @@ Rotate previously pasted credentials; confirm credit expiry; choose Track A/B an
 | Amplify with Next 16 | BLOCKED | AWS documents Next 12–15 only |
 | Kaggle 2×T4 acceptance, browser → AWS → Kaggle | **NOT RUN** | needs a deployed API and your launching the notebook |
 AWS resources created: **none**.
+
+
+## Update 2026-11-21 (dashboards, parity hardening, Lambda packaging)
+| Item | Status | Evidence |
+|---|---|---|
+| Git | 56c0739 verified private and in sync at start; new commit pushed at end | see final report |
+| Local tests | DONE | 422 passed / 6 skipped; smoke OK; SQL 61+78; lint/typecheck clean; 15 unit; 16 browser; 0 vulnerabilities |
+| AWS caller | **ROOT only** (no non-root profile; `vllm-temp` is empty) | cloud operations stopped; only local work and research |
+| Root-key remediation | PLAN ONLY | `docs/AWS_ROOT_KEY_REMEDIATION.md`; deployer policy with explicit GPU denies drafted |
+| Credit expiry / free-tier applicability | UNKNOWN | Billing console only; no API |
+| CloudWatch dashboard | **DRAFT, not deployed** | 30 metrics, 15 offline validation tests, read-only pre-flight script |
+| Enigma admin AWS page | **MOCK/SYNTHETIC built and tested; LIVE not run** | 26 backend + 6 browser tests |
+| DynamoDB moto parity | DONE (strengthened) | 78+ tests; one real bug found and fixed |
+| DynamoDB real-table parity | **NOT RUN** | guarded harness + throwaway template + measured cost; needs approval |
+| Next.js 16 Lambda package | DONE locally | 22.8 MB, zero native binaries, architecture independent; CloudFront-style proxy checks 25/25 |
+| Real Lambda + CloudFront + Web Adapter | **NOT RUN** | needs deployment approval |
+| Cognito | verifier hardened and attack-tested locally; **real pool NOT RUN** | 50 tests |
+| Idle polling | validated by simulation; default unchanged | saves under $0.4/mo |
+| CloudFront vs raw Function URL | decided on numbers: start raw | list price: raw cheaper at every load |
+| Kaggle build-5 on 2× T4 | **NOT RUN** | notebook ready (owner runs) |
+| Browser → AWS → Kaggle E2E | **NOT RUN** | needs a deployed API |
+AWS resources created or changed this session: **none**. Actual AWS spend: **not checked** (billing not accessible without root); do not read this as "$0".

@@ -21,7 +21,7 @@ from api_helpers import DEV_SECRET, Tenant, dev_token
 def test_user_routes_require_auth(client):
     assert client.get("/api/v1/app/me").status_code == 401
     assert client.get("/api/v1/app/me", headers={"Authorization": "Bearer junk"}).status_code == 401
-    assert client.get("/api/v1/app/me", headers={"Authorization": f"Bearer {dev_token('u1')}"}).json() == {"user_id": "u1", "auth": "dev"}
+    assert client.get("/api/v1/app/me", headers={"Authorization": f"Bearer {dev_token('u1')}"}).json() == {"user_id": "u1", "auth": "dev", "is_admin": False}   # is_admin: ENIGMA_ADMIN_SUBJECTS is empty => nobody is admin
 
 
 def test_expired_and_wrong_secret_user_tokens_rejected(client):

@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Comment": "DRAFT, NOT APPLIED. Execution-role policy that lets the Enigma API read AWS operational status for the admin-only page. READ ONLY: exactly the calls in enigma_api/awsops.py. No Cost Explorer, Billing, IAM, Organizations, Resource Explorer.",
+  "Statement": [
+    {
+      "Sid": "DescribeEnigmaResourcesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunctionConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${WEB_FUNCTION_NAME}",
+        "arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${API_FUNCTION_NAME}"
+      ]
+    },
+    {
+      "Sid": "DescribeTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeTimeToLive"
+      ],
+      "Resource": "arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${DDB_TABLE_NAME}"
+    },
+    {
+      "Sid": "DescribeDistribution",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:GetDistribution"
+      ],
+      "Resource": "arn:aws:cloudfront::${AWS_ACCOUNT_ID}:distribution/${CLOUDFRONT_DISTRIBUTION_ID}"
+    },
+    {
+      "Sid": "DescribeUserPool",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:DescribeUserPool"
+      ],
+      "Resource": "arn:aws:cognito-idp:${AWS_REGION}:${AWS_ACCOUNT_ID}:userpool/${USER_POOL_ID}"
+    },
+    {
+      "Sid": "ReadMetricsOnlyNoResourceLevelSupport",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

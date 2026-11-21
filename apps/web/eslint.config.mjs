@@ -10,6 +10,7 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-e2e/**",          // build output of the mock E2E suite
+    ".next-*/**",            // any other generated build dir (standalone/Lambda package validation, local experiments)
     "test-results/**",
     "playwright-report/**",
     "out/**",

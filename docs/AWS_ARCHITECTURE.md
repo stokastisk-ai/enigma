@@ -36,3 +36,10 @@ Single table keyed `WS#<id>`; membership item per user; claim via conditional `U
 - **Compute boundary:** AWS = CPU control plane only. The only GPU is the user's Kaggle 2×T4; when it is off the UI shows **offline** and keeps history; there is **no** AWS GPU, Bedrock/SageMaker or other hosted-model fallback (enforced by `tests/test_no_aws_gpu.py`).
 - **Track B is implemented (emulator-tested)**: `apps/api/enigma_api/store/dynamodb.py`, selected with `ENIGMA_STORE=dynamodb` + `ENIGMA_DDB_TABLE`. Single table, no GSI, strongly consistent reads, optimistic version counters for atomic claims/ordered events, `TransactWriteItems` for multi-item changes. PostgreSQL store untouched.
 - **Event polling:** browser polls `GET /jobs/{id}?after_seq=` (bounded, authenticated); the connector's claim polling can optionally back off when idle (`ENIGMA_CLAIM_POLL_IDLE_S`, default off).
+
+
+## Updated 2026-11-21 (visibility and packaging)
+- **Visibility is two separate things:** a native CloudWatch dashboard (draft) and an Enigma admin-only page; both show AWS operations only, never GPU data (`AWS_OPERATIONS_DASHBOARD.md`). The page's reader uses six read-only calls from the API's execution role and a validated manifest of resource ids.
+- **Web package:** `ENIGMA_STANDALONE=1` builds a 22.8 MB, native-binary-free Next 16 bundle; image optimisation is disabled and `sharp` excluded because Enigma uses no `next/image` (re-evaluate, and choose the architecture deliberately, if that changes).
+- **Front door:** raw Function URL first; CloudFront optional (price and trade-offs in `AWS_COST_MATRIX.md`).
+- **DynamoDB store:** `_batch_get` now retries `UnprocessedKeys` with backoff and raises rather than returning a partial result.

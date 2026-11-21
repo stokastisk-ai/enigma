@@ -28,7 +28,9 @@ export default defineConfig({
       cwd: root,
       url: `${API}/api/v1/health`,
       reuseExistingServer: false,
-      env: { ENIGMA_ENV: "development", ENIGMA_DEV_AUTH: "true", ENIGMA_DEV_JWT_SECRET: SECRET, CRON_SECRET: "c".repeat(32), ENIGMA_RUNTIME_ONLINE_S: "4", ENIGMA_RUNTIME_STALE_S: "8", PYTHONDONTWRITEBYTECODE: "1", ENIGMA_FORBID_LOCAL_GPU: "1" },
+      env: { ENIGMA_ENV: "development", ENIGMA_DEV_AUTH: "true", ENIGMA_DEV_JWT_SECRET: SECRET, CRON_SECRET: "c".repeat(32), ENIGMA_RUNTIME_ONLINE_S: "4", ENIGMA_RUNTIME_STALE_S: "8", PYTHONDONTWRITEBYTECODE: "1", ENIGMA_FORBID_LOCAL_GPU: "1",
+        // admin-only AWS page: SYNTHETIC demo data (mock mode never reads AWS), one admin id
+        ENIGMA_ADMIN_SUBJECTS: "user-aws-admin", ENIGMA_AWS_OPS: "mock", ENIGMA_BUILD_SHA: "e2e0000" },
     },
     {
       command: "npx next start -p 3100 -H 127.0.0.1",

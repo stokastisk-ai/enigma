@@ -52,3 +52,11 @@ def test_idle_backoff_scenario_lowers_api_volume_and_cost_but_not_the_rds_floor(
     low = m.tuned_comparison()["low"]
     assert low["track_a"][1] > 13.98                                   # the fixed RDS charge is untouched by polling
     assert m.claims_per_h({**m.A, "claim_idle_s": None}) == 3600.0 and m.claims_per_h({**m.A, "claim_idle_s": 5.0}) < 1100
+
+
+def test_cloudfront_comparison_is_consistent_and_the_difference_is_small_in_dollars():
+    c = m.cloudfront_comparison()
+    for n, x in c.items():
+        assert x["web_invocations"][1] > x["web_invocations"][0]                    # no CDN => more Lambda invocations
+        assert abs(x["with_cloudfront"] - x["raw_function_url"]) < 5.0               # the money difference is single-digit dollars at every workload
+    assert c["low"]["with_cloudfront"] < 2.0 and c["low"]["raw_function_url"] < 2.0

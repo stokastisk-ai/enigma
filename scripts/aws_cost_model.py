@@ -139,6 +139,26 @@ def webfn_alternative(w: dict, a: dict = A) -> dict:
             "total": round(reqs / 1e6 * P["webfn_req_per_m"] + cpu_s * P["webfn_vcpu_s"] + mem_s * P["webfn_gb_s"], 2)}
 
 
+def cloudfront_comparison(a: dict = A) -> dict:
+    """Web tier WITH CloudFront (assets cached, 90 % hit) vs a raw Function URL (every asset request is a Lambda invocation). LIST prices, no free tier.
+    Only the delta is modelled: API, DB, auth and logs are identical in both. Security/ops differences are listed in docs, not priced."""
+    out = {}
+    for n, w in WORKLOADS.items():
+        v = volumes(w, a)
+        web_ms = lambda assets: v["bff_req"] * a["ms_bff"] + v["page_views"] * a["ms_ssr"] + assets * a["ms_asset"]   # noqa: E731
+        def lam_cost(inv, assets):
+            return inv / 1e6 * P["lambda_req_per_m"] + web_ms(assets) / 1000 * a["web_mem_gb"] * P["lambda_gbs_arm"]
+        with_cf = lam_cost(v["web_invocations_cdn"], v["assets_origin"])
+        without = lam_cost(v["web_invocations_nocdn"], v["assets_all"])
+        est = estimate(w, False, a)
+        cf_line = est["lines"]["CloudFront (requests + transfer out)"]
+        logs = lambda inv: inv * a["log_bytes_per_invocation"] / 1e9 * (P["cw_ingest_gb"] + P["cw_store_gb_mo"] * a["log_retention_days"] / 30)   # noqa: E731
+        cf_free = estimate(w, True, a)["lines"]["CloudFront (requests + transfer out)"]
+        out[n] = {"with_cloudfront": round(with_cf + cf_line + logs(v["web_invocations_cdn"]), 2), "with_cloudfront_cf_free_tier": round(with_cf + cf_free + logs(v["web_invocations_cdn"]), 2), "raw_function_url": round(without + logs(v["web_invocations_nocdn"]), 2),
+                  "web_invocations": (round(v["web_invocations_cdn"]), round(v["web_invocations_nocdn"]))}
+    return out
+
+
 TUNED = {**A, "claim_idle_s": 5.0}
 
 
@@ -183,6 +203,11 @@ def markdown() -> str:
     out.append("|---|---:|---:|---:|")
     for n, c in tuned_comparison().items():
         out.append(f"| {n} | {c['api_invocations'][0]:,.0f} → {c['api_invocations'][1]:,.0f} | {c['track_a'][0]:.2f} → {c['track_a'][1]:.2f} | {c['track_b'][0]:.2f} → {c['track_b'][1]:.2f} |")
+    out.append("\n**Web tier: CloudFront vs a raw Function URL** (web-tier cost only, LIST prices, no free tier; the API, database, auth are identical)\n")
+    out.append("| Workload | Web invocations: CloudFront → raw | Web tier: CloudFront (list) | Web tier: CloudFront (its free tier applied) | Web tier: raw Function URL |")
+    out.append("|---|---:|---:|---:|---:|")
+    for n, c in cloudfront_comparison().items():
+        out.append(f"| {n} | {c['web_invocations'][0]:,} → {c['web_invocations'][1]:,} | {c['with_cloudfront']:.2f} | {c['with_cloudfront_cf_free_tier']:.2f} | {c['raw_function_url']:.2f} |")
     return "\n".join(out)
 
 

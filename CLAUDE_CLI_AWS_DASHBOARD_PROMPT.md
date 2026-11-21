@@ -1,0 +1,54 @@
+# Claude CLI — Complete Enigma AWS migration, free-tier visualization and Kaggle-only inference
+
+Continue the **EXISTING** proprietary Enigma codebase at `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/` on Ubuntu 24. Do NOT restart/rebuild, replace it with a template, or repeat proven work without checking diffs. Begin by reading `CLAUDE.md`, **the entirety of `skills.md` (Section 17 has precedence)**, `.claude/skills/enigma-aws-deploy/SKILL.md`, all AWS architecture/cost/security/deployment and test reports, the current Next.js/FastAPI/DynamoDB/connector source, Kaggle notebook and AWS IaC. Reconcile instructions with the *actual* repository and latest tests.
+
+## Unchangeable rules
+
+- **Never use AWS GPUs, GPU instances or AWS model APIs.** No EC2 GPU/CPU VM by default, Bedrock, SageMaker, GPU ECS/EKS/Batch, inference on Lambda, hosted model fallback or CUDA/vLLM in AWS. AWS = Next.js 16 UI + FastAPI Python3.13 control plane + Cognito + DynamoDB + CloudFront/Function URL + ops telemetry only. Inference and GPU performance measurements ONLY inside an explicitly user-launched Kaggle 2× NVIDIA Tesla T4 environment with Stokastisk build 5. Kaggle is temporary/personal-use as permitted; never assume commercial/24x7 entitlement.
+- **Never touch the laptop's GeForce 940M.** No `nvidia-smi`, local NVML probing, torch.cuda or local vLLM. Use mocks for local tests. Use exactly `/usr/local/bin/python3.13` for all local Python execution, tests and `-m pip` installs. Do not use uv, ruff, venv/virtualenv, Conda, Poetry, Pipenv or Go. No unapproved `--break-system-packages`.
+- Maintain strict Git privacy: only `stokastisk-ai/enigma` (PRIVATE); do not modify `stokastisk` or docs repositories, force push or rewrite history. Reviewed ordinary source commits and private pushes permitted. Preserve untracked owner files, source, tests, migrations and .git; never upload node_modules, wheels, CUDA, model weights, secrets or caches.
+- AWS caller was reportedly **root with root access keys**. DO NOT ask for root password, MFA code or access keys, and DO NOT deploy with root. Owner must first establish/test a non-root Identity Center or least-privilege role and then supervise root key removal. Do not rotate/delete keys automatically. Account was reported PAID with ~$99.99 credits and credit expiration UNKNOWN. Do not create/change AWS resources, including `PutDashboard`, Cognito, IAM, DynamoDB, Lambda, S3, CloudFront or Budgets, until nonroot identity + region + current cost/quota/credit verification + explicit approved itemized resource manifest and dollar-risk ceiling. A Budget alert is NOT a hard cap.
+
+## Latest historical checkpoint, not test proof
+
+Claude's last report: commit 56c0739 pushed privately; 317 pytest passed, 6 skipped; smoke, SQL 61+78, Node 15, browser 10 passed; DynamoDB moto adapter with contention tests; zero AWS resource creation. These MUST be checked against present Git/source/tests, not repeated as facts about current runtime. Real DynamoDB, live Lambda/CloudFront/Cognito, real Kaggle build5 and live E2E remain unverified.
+
+## Work to complete, in dependency order
+
+### Phase 0: inspect and protect
+
+Run `pwd`, `git status --short`, `git remote -v`, `git log -3 --oneline`, `git ls-files | wc -l`, `git diff --check`, relevant directory sizes, `/usr/local/bin/python3.13 --version` and check the no-GPU audit test before running tests. Verify GitHub PRIVATE with authenticated non-root tooling if accessible; a 404 may be an authorization issue. Inspect root-key remediation instructions. If AWS nonroot identity is unavailable, do AWS research and local coding ONLY; avoid AWS CLI actions that would use root credentials. Never disclose keys/account IDs in logs.
+
+### Phase 1: build AWS Operations visibility — two independent outputs
+
+A. **AWS-native CloudWatch dashboard**: produce version-controlled reviewable `infra/aws/dashboards/enigma-control-plane.json` (or nearest existing IaC location) with clearly substituted placeholders, ONE dashboard <=50 native AWS metrics. Group web and API Lambdas (invocations/errors/duration/throttles), DynamoDB (read/write capacity/throttles/system errors), CloudFront (requests/4xx/5xx), optionally Cognito supported metrics. Include namespace/dimensions/unit/time-period validity tests and an account-wide free-tier quota check procedure (three custom dashboards up to 50 metrics each per current official AWS CloudWatch pricing). NEVER create dashboard without approval; use existing metrics only. Avoid CloudWatch custom metrics, X-Ray, RUM, Container Insights, scheduled Logs Insights or agent installs. Dashboard should state NOT DEPLOYED until a real AWS dashboard URL and metrics exist.
+
+B. **Enigma-admin-only AWS Infrastructure page**: implement `/admin/aws` or existing setting route with canonical shadcn and existing Recharts, including resource inventory, deployed/absent state, region, environment, heartbeat, build SHA, Lambda traffic/errors/latency, DynamoDB capacity/throttling, CloudFront 4xx/5xx, Cognito summary where feasible, and cost/free-tier/credit status only when a verified supported safe data source exists. Include a safe link to AWS Billing/Cost Explorer rather than potentially billed Cost Explorer API by default. Distinguish AWS control-plane operational metrics from Kaggle GPU/vLLM observability. Add 401/403 checks for anonymous/non-admin and backend authorization, two-user isolation, explicit NOT DEPLOYED/UNKNOWN/STALE/SYNTHETIC states. The browser must NEVER get raw AWS credentials, ARNs, IAM details or cost data unless explicitly authorized admin. Use backend `boto3` reads only with a future least-privilege role and bounded/time-limited calls; no browser AWS SDK auth. Reuse manifest/stack outputs for inventory where possible; do not enable potentially paid Resource Explorer dependencies by default. Add low-rate cache to avoid AWS API overuse.
+
+### Phase 2: finish the existing AWS migration without cloud writes
+
+- Track B DynamoDB adapter already passes moto according to prior report. Audit and strengthen tests for tenant isolation, conditional claim race, ordered events, duplicate submit, atomic cap, cancelled/expired leases, pagination, throughput throttling, conditional-check failures, and TTL eventual deletion. Preserve original PostgreSQL implementation and all existing SQL tests. Prepare a *separate* real-table parity checklist and cost analysis; require explicit approval before creating a throwaway table, and do not leave tables running inadvertently.
+- Validate Next.js 16 standalone package with Lambda Web Adapter and existing Node version on CPU-only local mocks; test CloudFront allowed host/origin, cookies, CSRF spoof prevention, redirects, streaming and SSR. Check architecture compatibility before assuming ARM64. Keep the Python3.13 FastAPI API on its own Lambda target; never install Stokastisk/vLLM/CUDA in Lambda.
+- Check Cognito verifier/JWKS rotation, `token_use`, audience and issuer; strict tenant membership, frontend auth routes, and server-side permissions. Confirm no direct browser use of privileged AWS APIs.
+- Validate idle polling trade-offs with simulated latency and request-count metrics; no default change without measured benefit. Maintain ordered event replay, long-lived session state outside Lambda, offline/reconnect UX.
+- Prepare (do not execute) secure nonroot deployment IAM policy, small resource manifest, us-east-1 cost matrix as an *example*, account-credit expiry checklist, log retention/teardown procedures and a CloudWatch dashboard deployment plan. Don't turn previous estimates into firm prices.
+
+### Phase 3: run all safe tests
+
+Use only `/usr/local/bin/python3.13 -m pytest` after auditing for GPU calls, plus existing SQL tests, smoke test, web lint/typecheck/build, 15+ Node tests and 10+ Playwright/browser tests. Audit code for AWS GPU/Bedrock/SageMaker or hosted inference references in active IaC (historical docs can mention them as prohibited). Do not equate moto success with real-table success. Redact all secrets and raw prompts from logs; run secret scan of Git staged files and relevant history.
+
+### Phase 4: reviewed private GitHub checkpoint
+
+Update `skills.md` and `CLAUDE.md` when necessary, `README.md`, `.env.example` NAMES ONLY, docs AWS_COST_MATRIX, AWS_ARCHITECTURE, AWS_DEPLOYMENT, AWS_SECURITY, AWS_MIGRATION_REPORT, TEST_REPORT, plus a NEW `docs/AWS_OPERATIONS_DASHBOARD.md`. Review diffs; stage only necessary files; push normal commit to `stokastisk-ai/enigma` and verify visibility and remote SHA. Do not stage existing owner-untracked `CLAUDE_CLI_PROMPT.md` or `README_INSTALL.md` without reviewing them. Never remove source to shrink Git. Keep node_modules out of Git; avoid destructive cleanup.
+
+### Phase 5: AWS live approval gate — do not bypass
+
+If and ONLY if owner separately approves explicit resource list, exact region, a dollar-risk ceiling and a safe non-root session with current credits/quota verified: deploy minimal AWS resources one-by-one, initially throwaway DynamoDB table parity, then Python FastAPI Lambda, Next.js Lambda Web Adapter, Cognito, CloudFront where needed. Verify security and actual cost/usage with a kill/teardown plan. Deploy native CloudWatch dashboard only after checking account-wide free-dashboard quota and specific permission. Record real URLs, resource IDs privately and exact AWS changes; never claim deployment before tests. Any unapproved resource stays BLOCKED.
+
+### Phase 6: owner-run Kaggle and real E2E
+
+Prepare/verify existing Kaggle acceptance notebook. Owner runs it with authorized Python 3.13 dual-T4 session and pinned Stokastisk wheel build 5. Check real `nvidia-ml-py` readings for GPU0/GPU1, native vLLM `/metrics` via prometheus_client parser, Qwen2.5-0.5B TP=1 streaming, reconnection/offline and secrets redacted. After AWS HTTPS API is deployed, test browser -> AWS jobs -> outbound Kaggle T4 -> ordered response chunks -> browser and dashboards -> persistent history. Never claim that these tests passed if not run or when only mocked.
+
+### Required final report
+
+Provide a table listing: Git current SHA/privacy, Python/SQL/Node/browser tests, AWS caller (root/nonroot without exposing account IDs), root-key remediation, credits/expiry, active AWS resource inventory and billed/unbilled status, moto parity, real-DynamoDB parity, AWS-native CloudWatch dashboard DRAFT/LIVE, Enigma admin dashboard MOCK/LIVE, Lambda + CloudFront LIVE/NOT RUN, Cognito LIVE/NOT RUN, Kaggle build5 GPU NOT RUN/LIVE, full browser-to-Kaggle E2E NOT RUN/LIVE, and every new/deleted resource. Do not imply $0 actual spend when account billing has not been checked. Complete as many safe code/test/Git tasks as possible now; record external approval blockers precisely instead of requesting root access or improvising cloud deployment.

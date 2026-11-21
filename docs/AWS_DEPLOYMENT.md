@@ -2,6 +2,8 @@
 
 **Nothing in this file has been executed.** No AWS resource exists, no stack was created, no subscription enabled. Everything below is a plan for you to approve, amend or reject. Prices, assumptions and sources: `AWS_COST_MATRIX.md` (region `us-east-1`, recommended, not yet approved).
 
+> **Update 2026-11-21 — the approval package is now itemised.** `infra/aws/resource-manifest.yaml` lists every resource (unapproved; `approved: false`, region/identity/ceiling all `null`); `infra/aws/iam/enigma-deployer-policy.json` is the draft non-root deployer policy (explicit **denies** for every AWS GPU, SageMaker, Bedrock, ECS/EKS/Batch, NAT, Route 53, Secrets Manager, X-Ray, RUM, Cost Explorer, root-style identity actions); `infra/aws/iam/enigma-api-ops-reader-policy.json` is the read-only policy for the admin page; `infra/aws/dashboards/enigma-control-plane.json` is the CloudWatch dashboard draft; `infra/aws/dynamodb-parity.yaml` is the throwaway parity table. Everything is **draft and unapplied**. **Web-tier recommendation changed:** start with a **raw Function URL**, not CloudFront (cheaper at list price, simpler, same security checks; see `AWS_COST_MATRIX.md` §5). The Lambda package is the 22.8 MB architecture-independent standalone bundle (`ENIGMA_STANDALONE=1`), so ARM64 is safe.
+
 ## 1. Recommended architecture
 ```
 Browser ─HTTPS─► CloudFront (default *.cloudfront.net domain; caches /_next/static)
@@ -78,3 +80,20 @@ Until you answer, nothing is created or modified in AWS.
 
 ## 9. Local run (unchanged, zero spend)
 `/usr/local/bin/python3.13 -m uvicorn index:app --app-dir apps/api --port 8787` · `cd apps/web && npm run build && npx next start -p 3100`. Tests: `/usr/local/bin/python3.13 -m pytest`. No local GPU is ever used (`ENIGMA_FORBID_LOCAL_GPU=1`).
+
+
+## 10. Added 2026-11-21: ordered, gated rollout of the new pieces (nothing executed)
+Each step is **one reviewed write**, needs your explicit approval, a non-root identity, an approved region and a dollar ceiling, and ends with a verification and a rollback.
+| # | Write | Verification | Rollback |
+|---|---|---|---|
+| 0 | Non-root identity; root keys deactivated only after the new identity is proven (your action) | `sts get-caller-identity` is an assumed role, not `:root`; a denied GPU call is denied | re-enable the root key (kept inactive for days before deletion) |
+| 1 | Cognito user pool (Lite) | two-user sign-up/sign-in/sign-out; JWKS fetched and rotated by the API | delete pool |
+| 2 | **Throwaway** `enigma-parity-<suffix>` table (`dynamodb-parity.yaml`) | real-table parity run, `docs/AWS_DYNAMODB_REAL_PARITY.md` | `delete-stack`, confirm `list-tables` |
+| 3 | `enigma-dev` DynamoDB table + API access policy (`dynamodb.yaml`) | table exists, no GSI, TTL on `ttl` | delete stack |
+| 4 | API Lambda + Function URL (`template.yaml`) | health 200, 401 without token, two-tenant isolation with real Cognito tokens | delete stack |
+| 5 | Web Lambda (standalone bundle + Lambda Web Adapter) + Function URL | SSR, cookies, redirects, CSRF from the real origin | delete function |
+| 6 | *(optional)* CloudFront in front of the web Function URL | host/origin/cookie checks repeated; set `ENIGMA_PUBLIC_HOST`/`ENIGMA_PUBLIC_ORIGIN` | delete distribution |
+| 7 | *(optional)* `cloudwatch:PutDashboard` for `Enigma-Control-Plane` | `scripts/check_dashboard_quota.py` reported a free slot first; metrics visible | `delete-dashboards` |
+| 8 | Enable the admin page: `ENIGMA_AWS_OPS=live`, manifest, admin subject, ops-reader policy | page shows DEPLOYED rows and real graphs | set `ENIGMA_AWS_OPS=off` |
+| 9 | You launch the Kaggle notebook; full browser → AWS → Kaggle test | `docs/kaggle/enigma_connector_kaggle.ipynb` evidence record | stop the notebook |
+**Cost ledger:** record the approved ceiling, each step's estimated and actual cost, and the date the credits expire. A Budget notification (if you approve one) is **not** a cap. **Teardown order** is `teardown_order` in `resource-manifest.yaml`: dashboard, CloudFront, web, API, parity table, data table, log groups, Cognito, bucket, IAM roles. **Log retention** is 7 days; never log prompts or tokens.

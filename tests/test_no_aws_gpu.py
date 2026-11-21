@@ -33,7 +33,8 @@ _L.add_multi_constructor("!", lambda loader, suffix, node: loader.construct_scal
 
 
 def _templates():
-    return sorted(INFRA.glob("*.yaml"))
+    """CloudFormation templates only. resource-manifest.yaml is a plan document that deliberately LISTS forbidden types; it is covered by tests/test_iac_governance.py."""
+    return sorted(p for p in INFRA.glob("*.yaml") if "AWSTemplateFormatVersion" in p.read_text())
 
 
 def _walk(o):

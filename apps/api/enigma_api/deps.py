@@ -24,6 +24,7 @@ class AppState:
     verifier: UserVerifier
     broadcaster: Broadcaster
     limiters: dict[str, RateLimiter] = field(default_factory=dict)
+    ops: Any = None                                   # awsops.OpsService (admin-only AWS visibility); None until create_app builds it
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
 

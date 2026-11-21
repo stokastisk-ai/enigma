@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     clerk_jwks_url: str = Field(default="", validation_alias="CLERK_JWKS_URL")
     clerk_issuer: str = Field(default="", validation_alias="CLERK_ISSUER")
     clerk_authorized_parties: str = Field(default="", validation_alias="CLERK_AUTHORIZED_PARTIES")  # comma-separated origins (azp)
+    # AWS operations page (admin-only, read-only). Names only; no credentials here.
+    admin_subjects: str = ""                         # ENIGMA_ADMIN_SUBJECTS: comma-separated verified user ids, e.g. cognito:<sub>. Empty = nobody is admin
+    aws_ops: str = "off"                             # ENIGMA_AWS_OPS: off | mock (SYNTHETIC demo) | live (boto3 reads of the manifest resources)
+    aws_manifest: str = ""                           # ENIGMA_AWS_MANIFEST: JSON allow-list of resource ids (see awsops.Manifest)
+    aws_ops_cache_s: int = 60                        # ENIGMA_AWS_OPS_CACHE_S (floor 30): minimum seconds between AWS reads
+    build_sha: str = ""                              # ENIGMA_BUILD_SHA
+    environment: str = "dev"                         # ENIGMA_ENVIRONMENT
     # DynamoDB store (Track B). Table name only: credentials come from the Lambda execution role, never from settings.
     ddb_table: str = ""                              # env ENIGMA_DDB_TABLE (prefix-derived)
     # PostgreSQL (AWS RDS) store: libpq DSN. Server-only secret; with sslmode=verify-full for RDS. Never logged.
@@ -82,6 +89,18 @@ class Settings(BaseSettings):
                     raise ValueError
             except ValueError:
                 problems.append("COGNITO_JWKS_JSON must be a JWKS document with RSA keys that carry a kid")
+        if self.aws_ops not in ("off", "mock", "live"):
+            problems.append("ENIGMA_AWS_OPS must be off, mock or live")
+        if self.aws_ops == "mock" and (self.is_production or self.on_vercel):
+            problems.append("ENIGMA_AWS_OPS=mock (synthetic data) is refused in production")
+        if self.aws_ops == "live":
+            from .awsops import Manifest, ManifestError
+            try:
+                Manifest.parse(self.aws_manifest)
+            except ManifestError as e:
+                problems.append(f"ENIGMA_AWS_MANIFEST invalid: {e}")
+            if not self.admin_subjects.strip():
+                problems.append("ENIGMA_ADMIN_SUBJECTS is required when ENIGMA_AWS_OPS=live")
         if self.cognito_token_use not in ("access", "id"):
             problems.append("COGNITO_TOKEN_USE must be 'access' or 'id'")
         if self.dev_auth and (prod or self.env not in ("development", "test")):

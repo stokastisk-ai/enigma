@@ -1,0 +1,110 @@
+{
+  "Version": "2012-10-17",
+  "Comment": "DRAFT, UNREVIEWED, NOT APPLIED. Attach to a NON-ROOT IAM Identity Center permission set after review. Replace ${...} placeholders; narrow Resource to enigma-* ARNs once the manifest is approved.",
+  "Statement": [
+    {
+      "Sid": "ControlPlaneServices",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*",
+        "dynamodb:*",
+        "cognito-idp:*",
+        "logs:*",
+        "cloudfront:*",
+        "s3:*",
+        "cloudformation:*",
+        "cloudwatch:PutDashboard",
+        "cloudwatch:GetDashboard",
+        "cloudwatch:ListDashboards",
+        "cloudwatch:DeleteDashboards",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+        "iam:PassRole",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:GetPolicy",
+        "iam:TagRole",
+        "iam:TagPolicy",
+        "ssm:GetParameter",
+        "ssm:PutParameter",
+        "budgets:ViewBudget",
+        "pricing:*",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NoGpuNoAcceleratorNoHostedAi",
+      "Effect": "Deny",
+      "Action": [
+        "sagemaker:*",
+        "bedrock:*",
+        "bedrock-runtime:*",
+        "bedrock-agent:*",
+        "elasticinference:*",
+        "ec2:RunInstances",
+        "ec2:RequestSpotInstances",
+        "ec2:RequestSpotFleet",
+        "ec2:CreateFleet",
+        "ec2:CreateLaunchTemplate",
+        "ec2:AllocateHosts",
+        "ec2:PurchaseHostReservation",
+        "batch:*",
+        "ecs:*",
+        "eks:*",
+        "autoscaling:*",
+        "apprunner:*",
+        "lightsail:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NoBillableNetworkingOrExtrasByAccident",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateNatGateway",
+        "ec2:AllocateAddress",
+        "elasticloadbalancing:*",
+        "route53:CreateHostedZone",
+        "route53domains:*",
+        "secretsmanager:CreateSecret",
+        "wafv2:Create*",
+        "rds:Create*",
+        "xray:*",
+        "rum:*",
+        "synthetics:*",
+        "cloudwatch:PutMetricData",
+        "cloudwatch:PutMetricStream",
+        "cloudwatch:PutMetricAlarm",
+        "logs:PutQueryDefinition",
+        "ce:*",
+        "resource-explorer-2:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NeverTouchBillingIdentityOrOrganisation",
+      "Effect": "Deny",
+      "Action": [
+        "account:*",
+        "aws-portal:Modify*",
+        "billing:Update*",
+        "iam:CreateAccessKey",
+        "iam:CreateUser",
+        "iam:DeleteAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:CreateLoginProfile",
+        "organizations:*",
+        "sso:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

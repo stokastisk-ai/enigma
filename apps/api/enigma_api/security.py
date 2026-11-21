@@ -93,6 +93,17 @@ class UserIdentity:
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
 
 
+_SUBJECT = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def _valid_subject(sub: Any) -> str:
+    """A verified token must still carry a usable subject. An empty/odd `sub` would collapse every such user into one identity (and so one tenant);
+    ':' is excluded so a token can never forge the `cognito:` namespace prefix. Cognito subs are UUIDs, which this accepts."""
+    if not isinstance(sub, str) or not _SUBJECT.fullmatch(sub):
+        raise ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
+    return sub
+
+
 class JwksCache:
     """Cognito signing keys with safe rotation.
 
@@ -186,7 +197,7 @@ class UserVerifier:
         client = claims.get("aud") if s.cognito_token_use == "id" else claims.get("client_id")
         if client != s.cognito_app_client_id:
             raise unauthorized
-        return UserIdentity(f"cognito:{claims['sub']}", "cognito")
+        return UserIdentity(f"cognito:{_valid_subject(claims['sub'])}", "cognito")
 
     def _signing_key(self, token: str) -> Any:
         if self._resolver:
@@ -223,7 +234,7 @@ class UserVerifier:
                 raise unauthorized
             if claims.get("sts") == "pending":            # Clerk: session still has pending tasks
                 raise unauthorized
-            return UserIdentity(str(claims["sub"]), "clerk")
+            return UserIdentity(_valid_subject(claims["sub"]), "clerk")
         except ApiError:
             raise
         except (jwt.PyJWTError, KeyError, OSError):

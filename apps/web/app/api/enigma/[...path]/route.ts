@@ -16,6 +16,7 @@ const R = (method: Rule["method"], pattern: string, extra: Partial<Rule> = {}): 
 
 const RULES: Rule[] = [
   R("GET", "me"),
+  R("GET", "admin/aws/(status|metrics|cost)"), // Enigma-admin only: the BACKEND enforces default-deny; this only forwards
   R("GET", "workspaces"),
   R("POST", "workspaces", { body: WorkspaceCreate }),
   R("GET", `workspaces/${ID}/projects`),

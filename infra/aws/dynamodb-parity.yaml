@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  THROWAWAY DynamoDB table for the one-off real-table parity run (docs/AWS_DYNAMODB_REAL_PARITY.md). REVIEW DRAFT. NOT DEPLOYED.
+  Creating it is a billable action and needs the owner's explicit approval, a NON-ROOT identity, an approved region and a dollar ceiling.
+  Delete the stack immediately after the run. The name and tag below are what the test guard (tests/live_ddb_guard.py) requires before it will delete anything in the table.
+Parameters:
+  Suffix: { Type: String, AllowedPattern: "^[a-z0-9]{6,32}$", Description: "random lowercase suffix; the table is enigma-parity-<Suffix>" }
+  ReadCapacity: { Type: Number, Default: 25, MinValue: 1, MaxValue: 25, Description: "<= the 25 RCU free-tier maximum (applicability to this PAID account is UNVERIFIED)" }
+  WriteCapacity: { Type: Number, Default: 25, MinValue: 1, MaxValue: 25 }
+Resources:
+  ParityTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "enigma-parity-${Suffix}"
+      BillingMode: PROVISIONED
+      TableClass: STANDARD
+      ProvisionedThroughput: { ReadCapacityUnits: !Ref ReadCapacity, WriteCapacityUnits: !Ref WriteCapacity }
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: false }
+      DeletionProtectionEnabled: false
+      Tags:
+        - { Key: Purpose, Value: enigma-parity-throwaway }
+        - { Key: Project, Value: Enigma }
+        - { Key: Environment, Value: parity }
+Outputs:
+  TableName: { Value: !Ref ParityTable }

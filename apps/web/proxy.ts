@@ -25,9 +25,13 @@ async function cognito(req: NextRequest) {
   const at = req.cookies.get(COOKIE_ACCESS)?.value;
   if (at && (await verifyAccessToken(at, cfg))) return NextResponse.next();
   if (req.cookies.get(COOKIE_REFRESH)) return NextResponse.next(); // session refresh happens server-side; an invalid refresh token ends at the page gate
-  if (pathname.startsWith("/api/")) return NextResponse.json({ error: { code: "unauthorized", message: "authentication required" } }, { status: 401 });
+  // no-store on every auth decision: a CDN must never cache "401" or "go sign in" and replay it to a different (signed-in) viewer.
+  const noStore = { "cache-control": "no-store" };
+  if (pathname.startsWith("/api/")) return NextResponse.json({ error: { code: "unauthorized", message: "authentication required" } }, { status: 401, headers: noStore });
   // Behind CloudFront the request URL carries the Function URL host; redirect to the configured public origin so users never leave the CDN.
-  return NextResponse.redirect(new URL("/sign-in", process.env.ENIGMA_PUBLIC_ORIGIN || req.url));
+  const redirect = NextResponse.redirect(new URL("/sign-in", process.env.ENIGMA_PUBLIC_ORIGIN || req.url));
+  redirect.headers.set("cache-control", "no-store");
+  return redirect;
 }
 
 /** Fail closed: with no provider and no explicitly-allowed dev mode, every non-public route is refused. */

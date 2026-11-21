@@ -14,6 +14,8 @@ type Ctx = {
   runtimesError: ApiFailure | null; runtimesUpdatedAt: number | null; reloadRuntimes: () => void; reloadProjects: () => void;
   range: Range; setRange: (r: Range) => void; utc: boolean; setUtc: (u: boolean) => void; loading: boolean; error: ApiFailure | null;
   canAdmin: boolean; canWrite: boolean;
+  /** Enigma platform administrator (ENIGMA_ADMIN_SUBJECTS). Only controls whether the AWS Infrastructure nav item is shown; the BACKEND is the real gate. */
+  isAdmin: boolean;
 };
 const C = createContext<Ctx | null>(null);
 export const useConsole = () => { const v = useContext(C); if (!v) throw new Error("useConsole outside provider"); return v; };
@@ -40,6 +42,7 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  const mePoll = usePoll<{ is_admin?: boolean }>((s) => api("me", { signal: s }), 0, []);
   const wsPoll = usePoll<{ items: Workspace[] }>((s) => api("workspaces", { signal: s }), 0, []);
   const workspaces = wsPoll.data?.items ?? null;
   const workspace = useMemo(() => workspaces?.find((w) => w.id === wsId) ?? workspaces?.[0] ?? null, [workspaces, wsId]);
@@ -61,6 +64,7 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
     utc, setUtc: (u) => { setUtcState(u); store.set("enigma.utc", u ? "1" : "0"); },
     loading: !booted || wsPoll.loading || (!!workspace && projPoll.loading), error: wsPoll.error ?? projPoll.error,
     canAdmin: workspace?.role === "owner" || workspace?.role === "admin", canWrite: workspace?.role !== "viewer" && !!workspace,
+    isAdmin: mePoll.data?.is_admin === true,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

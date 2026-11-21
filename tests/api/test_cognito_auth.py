@@ -5,6 +5,7 @@ This proves claim handling and tenant isolation in our code. It is NOT evidence 
 """
 from __future__ import annotations
 
+import json
 import time
 
 import jwt
@@ -275,3 +276,77 @@ def test_default_fetcher_refuses_non_https_urls():
     with pytest.raises(OSError):
         from enigma_api.security import JwksCache
         JwksCache._default_fetch("http://cognito-idp.us-east-1.amazonaws.com/x/.well-known/jwks.json")
+
+
+# ---- JWT header / claim attacks (the verifier must trust ONLY its own cached/pinned keys and the pool issuer)
+def _attack_token(key, headers=None, **claims):
+    base = {"sub": "u-atk", "iss": ISS, "iat": int(time.time()), "exp": int(time.time()) + 600, "token_use": "access", "client_id": CLIENT}
+    return jwt.encode({**base, **claims}, key, algorithm="RS256", headers={"kid": "k1", **(headers or {})})
+
+
+def _good_verifier():
+    idp = _Idp(_doc((_KEY.public_key(), "k1")))
+    return UserVerifier(settings(), jwks_fetch=idp, clock=_Clk()), idp
+
+
+def test_embedded_jwk_header_signed_by_the_attacker_is_ignored():
+    from jwt.algorithms import RSAAlgorithm
+    evil = json.loads(RSAAlgorithm.to_jwk(_OTHER.public_key())); evil["kid"] = "k1"
+    v, _ = _good_verifier()
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_OTHER, headers={"jwk": evil}))                  # attacker signs with their key and ships the public half in the token
+
+
+@pytest.mark.parametrize("hdr", [{"jku": "https://evil.example/jwks.json"}, {"x5u": "https://evil.example/cert.pem"}, {"x5c": ["MIIB"]}, {"crit": ["exp"]}])
+def test_key_location_headers_are_never_followed(hdr):
+    v, idp = _good_verifier()
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_OTHER, headers=hdr))
+    assert idp.hits <= 1                                                        # no request to the attacker's URL; only our own pool JWKS may be consulted
+
+
+@pytest.mark.parametrize("kid", ["../../etc/passwd", "k1\u0000", "k1 ", "K1", "", "k1" * 500, "' OR '1'='1"])
+def test_hostile_or_near_miss_kids_are_refused(kid):
+    v, _ = _good_verifier()
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_KEY, headers={"kid": kid}))
+
+
+def test_not_before_in_the_future_and_missing_exp_are_refused():
+    v, _ = _good_verifier()
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_KEY, nbf=int(time.time()) + 3600))
+    tok = jwt.encode({"sub": "u", "iss": ISS, "iat": int(time.time()), "token_use": "access", "client_id": CLIENT}, _KEY, algorithm="RS256", headers={"kid": "k1"})
+    with pytest.raises(ApiError):
+        v.verify(tok)                                                           # no exp => never valid forever
+
+
+@pytest.mark.parametrize("claims", [{"sub": ""}, {"iss": ISS + "/"}, {"iss": ISS.upper()}, {"iss": ISS.replace("us-east-1", "eu-west-1")}, {"client_id": CLIENT.upper()}, {"client_id": [CLIENT]}])
+def test_near_miss_claims_are_refused(claims):
+    v, _ = _good_verifier()
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_KEY, **claims))
+
+
+def test_subject_is_namespaced_so_it_cannot_impersonate_another_provider_or_user():
+    v, _ = _good_verifier()
+    ident = v.verify(_attack_token(_KEY, sub="user_victim"))
+    assert ident.user_id == "cognito:user_victim" and ident.auth == "cognito"      # a Cognito sub can never equal a Clerk/dev user id
+    for bad in ("cognito:x", "a:b", "x" * 129, "a b", "../x", "u\u0000", "é", 42):
+        with pytest.raises(ApiError):                                                # odd subjects (incl. a forged `cognito:` prefix) are refused outright
+            v.verify(_attack_token(_KEY, sub=bad))
+
+
+def test_a_token_for_a_different_user_pool_with_a_valid_signature_shape_is_refused():
+    v, _ = _good_verifier()
+    other_pool = f"https://cognito-idp.us-east-1.amazonaws.com/us-east-1_OTHERPOOL"
+    with pytest.raises(ApiError):
+        v.verify(_attack_token(_KEY, iss=other_pool))                            # even if the signature were somehow valid, another pool's tokens are refused
+
+
+def test_the_api_never_returns_verifier_internals_in_the_401():
+    with TestClient(create_app(settings(), store=MemoryStore(Clock()), broadcaster=RecordingBroadcaster(), clock=Clock(), verifier=_good_verifier()[0]), raise_server_exceptions=False) as c:
+        r = c.get("/api/v1/app/me", headers={"Authorization": f"Bearer {_attack_token(_OTHER)}"})
+        assert r.status_code == 401 and r.headers["www-authenticate"] == "Bearer"
+        txt = r.text.lower()
+        assert not any(w in txt for w in ("signature", "kid", "jwks", "issuer", "expired", "pyjwt", "cognito"))        # no oracle for an attacker

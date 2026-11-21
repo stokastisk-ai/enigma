@@ -1,12 +1,13 @@
 ---
 name: enigma-aws-deploy
-description: Continue the existing proprietary Enigma AWS control-plane migration while keeping all GPU inference exclusively on Kaggle 2x Tesla T4, protecting private Git, Python 3.13 rules, and AWS cost gates.
+description: Maintain and safely deploy proprietary Enigma AWS control plane and create owner-only AWS operations dashboards. Only Kaggle dual T4 may run Stokastisk inference.
 ---
 
-# Enigma — AWS control plane, Kaggle GPUs only
+# Enigma AWS deployment and operations dashboard skill
 
-Read root `CLAUDE.md`, the entire `skills.md` (**Section 16 highest precedence**), `CLAUDE_CLI_KAGGLE_ONLY_PROMPT.md`, existing AWS cost/security/architecture/deployment documents, and relevant source. Do not rebuild the application.
-
-Absolute prohibitions: **NO AWS GPU** of any kind (EC2 G/P/DL, SageMaker, accelerator instances, GPU container nodes, Bedrock inference fallback); **NO local GeForce 940M access or NVML initialization**. Kaggle's authorized 2x Tesla T4 only runs Stokastisk/vLLM. AWS Lambda/CloudFront/Cognito/database only host the web/control plane, and are still subject to billable-resource approval.
-
-Use `/usr/local/bin/python3.13` / `-m pip`; no uv, ruff, venv or Go. Mock local GPU metrics. Audit root AWS keys/security; do not execute deployment as root or silently rotate credentials. Do not create billable resources until region, credits/expiry, pricing and explicit user approval are established. Keep `stokastisk-ai/enigma` private; reviewed secret-free normal pushes permitted, no force/reset. Prior reported test count 184 pass/6 skip is historical; rerun relevant tests. Report actual findings and blockers.
+1. Read root `CLAUDE.md`, all of `skills.md` (especially authoritative Section 17), `CLAUDE_CLI_AWS_DASHBOARD_PROMPT.md`, current source/IaC/tests and cost/deployment reports.
+2. Review Git private remote, Python interpreter, AWS identity and no-local-GPU guard. Do not use root credentials for deployment. No AWS writes without separately approved exact manifest, region and ceiling.
+3. Build/test Enigma-admin-only AWS inventory page using FastAPI+boto3 read-only design, existing shadcn/Recharts; add a single <=50 metric CloudWatch dashboard template, not a deployed dashboard without approval.
+4. Finish AWS DynamoDB parity, Next.js Lambda Web Adapter, Cognito/JWKS, secure CloudFront routing, bounded polling; preserve existing PostgreSQL code and other tests.
+5. AWS hosts no GPU inference or hosted LLM. Kaggle 2xT4 exclusively for explicitly user-launched Stokastisk; never local 940M or AWS GPU. GPU metrics only native vLLM, nvidia-ml-py, prometheus_client.
+6. Run CPU-only Python3.13 tests, browser tests, secret scans. Push reviewed source to the existing private Enigma repo; no force push or destructive cleanup. Report true deployment and billing statuses.

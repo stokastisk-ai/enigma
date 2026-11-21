@@ -81,7 +81,9 @@ export function TimeSeries({ rows, series, unit, utc, domain, area, height = 200
     </>
   );
   return (
-    <div role="img" aria-label={`${label}: ${series.map((s) => s.label).join(", ")} over time`}>
+    <div>
+      {/* only the graphic is an image: the table disclosure below is interactive and must not be nested inside role="img" (axe: nested-interactive) */}
+      <div role="img" aria-label={`${label}: ${series.map((s) => s.label).join(", ")} over time`}>
       <ChartContainer config={config} className="w-full" style={{ height }}>
         {area ? (
           <AreaChart data={rows} margin={{ left: 0, right: 8, top: 4 }}>{axes}
@@ -93,6 +95,7 @@ export function TimeSeries({ rows, series, unit, utc, domain, area, height = 200
           </LineChart>
         )}
       </ChartContainer>
+      </div>
       <DataTableView rows={rows} series={series} unit={unit} utc={utc} />
     </div>
   );
