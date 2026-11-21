@@ -1,0 +1,36 @@
+# secrets / env
+.env
+.env.*
+!.env.example
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+# node / next
+node_modules/
+.next/
+.next-e2e/
+out/
+next-env.d.ts
+*.tsbuildinfo
+# vercel
+.vercel/
+# artifacts that must never enter git
+*.whl
+*.zip
+*.log
+*.jsonl
+*.spool
+.spool/
+reports/
+playwright-report/
+test-results/
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# local backups / editor-agent state (never commit)
+*.backup-*
+.claude/settings.local.json

@@ -1,0 +1,39 @@
+# SYNTHETIC exposition, hand-written to mirror the family names/labels defined in vLLM 0.25.1 (vllm/v1/metrics/loggers.py).
+# It is NOT a scrape from a real server. Two engines show label aggregation.
+# HELP vllm:num_requests_running Number of requests in model execution batches.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:num_requests_running{engine="1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 1.0
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# TYPE vllm:kv_cache_usage_perc gauge
+vllm:kv_cache_usage_perc{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.125
+vllm:kv_cache_usage_perc{engine="1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.25
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 1000.0
+vllm:prompt_tokens_total{engine="1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 500.0
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 4000.0
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 3.0
+# TYPE vllm:request_success_total counter
+vllm:request_success_total{engine="0",finished_reason="stop",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 9.0
+vllm:request_success_total{engine="0",finished_reason="length",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 1.0
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.01",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="0.1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 6.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="1.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 9.0
+vllm:time_to_first_token_seconds_bucket{engine="0",le="+Inf",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 10.0
+vllm:time_to_first_token_seconds_sum{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.5
+vllm:time_to_first_token_seconds_count{engine="0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 10.0
+vllm:time_to_first_token_seconds_bucket{engine="1",le="0.01",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 1.0
+vllm:time_to_first_token_seconds_bucket{engine="1",le="0.1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:time_to_first_token_seconds_bucket{engine="1",le="1.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:time_to_first_token_seconds_bucket{engine="1",le="+Inf",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:time_to_first_token_seconds_sum{engine="1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.1
+vllm:time_to_first_token_seconds_count{engine="1",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+# an unrelated family that must be ignored (cardinality / allowlist)
+# TYPE vllm:request_prompt_tokens histogram
+vllm:request_prompt_tokens_bucket{engine="0",le="+Inf",model_name="m"} 5.0
+vllm:request_prompt_tokens_sum{engine="0",model_name="m"} 50.0
+vllm:request_prompt_tokens_count{engine="0",model_name="m"} 5.0

@@ -1,0 +1,6 @@
+# Vercel-side API only. NO torch / vllm / stokastisk / CUDA here (see docs/DEPLOYMENT.md).
+fastapi==0.163.1
+pydantic==2.14.3
+pydantic-settings==2.16.3
+httpx==0.28.1
+PyJWT[crypto]==2.15.1
