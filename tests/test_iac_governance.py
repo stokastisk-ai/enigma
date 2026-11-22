@@ -115,3 +115,37 @@ def test_dashboard_resource_matches_the_real_draft_file():
     d = json.loads((ROOT / "infra/aws/dashboards/enigma-control-plane.json").read_text())
     n = sum(len(w["properties"]["metrics"]) for w in d["widgets"] if w["type"] == "metric")
     assert n == next(r for r in MANIFEST["resources"] if r["id"] == "cloudwatch_dashboard")["metrics"]
+
+
+# ---- web tier draft (Path A) ----
+class _CfnLoader(yaml.SafeLoader):
+    pass
+
+
+_CfnLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
+
+
+def _web_template():
+    return yaml.load((ROOT / "infra/aws/web-template.yaml").read_text(), Loader=_CfnLoader)
+
+
+def test_web_template_is_cpu_only_minimal_and_bounded():
+    t = _web_template()
+    types = {r["Type"] for r in t["Resources"].values()}
+    assert types == {"AWS::Logs::LogGroup", "AWS::IAM::Role", "AWS::Lambda::Function", "AWS::Lambda::Url", "AWS::Lambda::Permission"}
+    assert not any(re.match(p.replace("*", ".*"), ty) for ty in types for p in ("AWS::EC2::.*", "AWS::SageMaker::.*", "AWS::Bedrock::.*", "AWS::ECS::.*", "AWS::EKS::.*", "AWS::CloudFront::.*"))
+    fn = t["Resources"]["WebFunction"]["Properties"]
+    assert fn["ReservedConcurrentExecutions"] <= 5 and fn["Timeout"] <= 30 and fn["Runtime"].startswith("nodejs")
+    assert t["Resources"]["WebLogs"]["Properties"]["RetentionInDays"] == 7
+
+
+def test_web_template_holds_no_secret_or_pinned_account_value():
+    text = (ROOT / "infra/aws/web-template.yaml").read_text()
+    assert not re.search(r"\b\d{12}\b", text.replace("[0-9]{12}", "")), "no account id in IaC"
+    env = _web_template()["Resources"]["WebFunction"]["Properties"]["Environment"]["Variables"]
+    assert not [k for k in env if re.search(r"SECRET|PASSWORD|PRIVATE|SERVICE_ROLE|AWS_ACCESS", k)]
+
+
+def test_web_role_is_logs_only():
+    stmts = _web_template()["Resources"]["WebRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+    assert [s["Action"] for s in stmts] == [["logs:CreateLogStream", "logs:PutLogEvents"]]

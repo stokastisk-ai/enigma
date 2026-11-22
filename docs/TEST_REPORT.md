@@ -134,3 +134,7 @@ Verdict and sources: `docs/AWS_AMPLIFY_NEXT16.md`. Real Amplify/Lambda/Cognito/D
 | `validate_nextjs_lambda.py` | 0 failures |
 | `build_amplify_bundle.py --build --serve-check` | 20/20 |
 Evidence limits unchanged: real Amplify, LWA, CloudFront, Cognito, DynamoDB, Kaggle 2×T4 and browser→AWS→Kaggle are NOT RUN.
+
+## 2026-11-22 (session 3): connector contract fix, teardown script, web-tier IaC draft, notebook governance
+- pytest: 448 passed, 6 skipped (same 5 live-Clerk + 1 remote-only GPU skips); new tests: `test_aws_teardown.py` (9, fake aws runner, no AWS call), `test_kaggle_notebook.py` (5, static), `test_iac_governance.py` +3 (web template), `test_executor.py` +1 (chunk_count, never token_count).
+- NOT RUN: real AWS (no resource exists), Kaggle GPU (build 5 / TP=1 / TP=2), browser→AWS→Kaggle path. See `docs/E2E_DATA_FLOW.md`.
