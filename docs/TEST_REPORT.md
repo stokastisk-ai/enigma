@@ -122,5 +122,15 @@ New coverage this run: `tests/api/test_awsops.py` (26: admin authorization, hone
 | `npm run build` (Next 16.4.6) | OK, 16 routes all dynamic |
 | `npm run test:e2e` (mock) | 16 passed |
 | `scripts/validate_nextjs_lambda.py --build` | 0 failures (22.8 MB, 0 native binaries) |
-| `scripts/build_amplify_bundle.py --serve-check` | 14/14 deployment-spec checks pass; NOT proof of Amplify support |
+| `scripts/build_amplify_bundle.py --serve-check` | 20/20 bundle checks pass (second pass); NOT proof of Amplify support |
 Verdict and sources: `docs/AWS_AMPLIFY_NEXT16.md`. Real Amplify/Lambda/Cognito/DynamoDB, Kaggle 2xT4 and browser→AWS→Kaggle E2E: NOT RUN.
+
+## 2026-11-22 audit pass (second session; CPU-only, no AWS writes, local GPU untouched)
+| Check | Result |
+|---|---|
+| `/usr/local/bin/python3.13 -m pytest` | **429 passed, 6 skipped** (same six); +7 vs previous: Amplify governance (6, incl. hostile env values under `/bin/sh` and bash) and Amplify cost line (1) |
+| typecheck / lint / node unit | clean / clean (after ignoring generated `.amplify-hosting/**`; before that fix lint scanned the bundle: 16,180 problems) / 15 of 15 |
+| Mock Playwright E2E | 16 passed |
+| `validate_nextjs_lambda.py` | 0 failures |
+| `build_amplify_bundle.py --build --serve-check` | 20/20 |
+Evidence limits unchanged: real Amplify, LWA, CloudFront, Cognito, DynamoDB, Kaggle 2×T4 and browser→AWS→Kaggle are NOT RUN.

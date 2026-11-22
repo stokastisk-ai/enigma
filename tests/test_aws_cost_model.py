@@ -60,3 +60,13 @@ def test_cloudfront_comparison_is_consistent_and_the_difference_is_small_in_doll
         assert x["web_invocations"][1] > x["web_invocations"][0]                    # no CDN => more Lambda invocations
         assert abs(x["with_cloudfront"] - x["raw_function_url"]) < 5.0               # the money difference is single-digit dollars at every workload
     assert c["low"]["with_cloudfront"] < 2.0 and c["low"]["raw_function_url"] < 2.0
+
+
+def test_amplify_alternative_is_itemised_and_priced_at_the_fetched_list_rates():
+    for w in m.WORKLOADS.values():
+        a = m.amplify_alternative(w)
+        assert abs(a["total"] - sum(v for k, v in a.items() if k != "total")) < 0.02      # rounding only
+        assert a["data_transfer"] >= 0 and a["builds"] == round(20 * 4.0 * 0.01, 2)
+    lo, hi = (m.amplify_alternative(m.WORKLOADS[n]) for n in ("low", "high"))
+    assert hi["total"] > lo["total"]
+    assert m.P_AMPLIFY["dto_gb"] > m.P["cf_dto_gb"]                                       # Amplify transfer is dearer than CloudFront per GB

@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     ".next-*/**",            // any other generated build dir (standalone/Lambda package validation, local experiments)
     "test-results/**",
     "playwright-report/**",
+    ".amplify-hosting/**",   // generated Amplify deployment bundle (scripts/build_amplify_bundle.py); contains compiled third-party code
     "out/**",
     "build/**",
     "next-env.d.ts",

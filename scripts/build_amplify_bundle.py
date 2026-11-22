@@ -32,6 +32,7 @@ OUT = WEB / ".amplify-hosting"
 MAX_COMPUTE_BYTES = 220 * 1024 * 1024  # documented uncompressed limit for compute/default
 MAX_ROUTES = 25
 ENTRY = "amplify-entry.js"
+SKIP = shutil.ignore_patterns(".env*", "*.map", "*.tsbuildinfo", "*.pem", "*.key")
 
 # Wrapper because the spec requires the HTTP server on port 3000, while Next's server.js reads PORT/HOSTNAME from the environment.
 ENTRY_JS = """\
@@ -51,15 +52,22 @@ def build() -> None:
 def assemble() -> dict:
     if not (PKG / "server.js").exists():
         sys.exit("standalone output missing: run with --build")
+    # Containment: only ever delete/recreate the one fixed output directory directly under apps/web.
+    if OUT.resolve().parent != WEB.resolve() or OUT.name != ".amplify-hosting":
+        sys.exit("refusing to touch an unexpected output path")
+    if OUT.is_symlink():
+        sys.exit("refusing: output path is a symlink")
     shutil.rmtree(OUT, ignore_errors=True)
     compute, static = OUT / "compute" / "default", OUT / "static"
-    shutil.copytree(PKG, compute, symlinks=False)
+    # symlinks=True copies links AS links (never follows them out of the tree); validate() then fails the build if any exist.
+    # .env* / source maps / tsbuildinfo are excluded at copy time so credentials and absolute-path metadata cannot enter the artifact.
+    shutil.copytree(PKG, compute, symlinks=True, ignore=SKIP)
     # Next's standalone omits static assets and public/: the compute copy needs them for fallback; the static primitive serves them from the edge.
-    shutil.copytree(WEB / DIST / "static", compute / DIST / "static", dirs_exist_ok=True)
-    shutil.copytree(WEB / DIST / "static", static / "_next" / "static", dirs_exist_ok=True)
+    shutil.copytree(WEB / DIST / "static", compute / DIST / "static", dirs_exist_ok=True, symlinks=True, ignore=SKIP)
+    shutil.copytree(WEB / DIST / "static", static / "_next" / "static", dirs_exist_ok=True, symlinks=True, ignore=SKIP)
     if (WEB / "public").exists():
-        shutil.copytree(WEB / "public", compute / "public", dirs_exist_ok=True)
-        shutil.copytree(WEB / "public", static, dirs_exist_ok=True)
+        shutil.copytree(WEB / "public", compute / "public", dirs_exist_ok=True, symlinks=True, ignore=SKIP)
+        shutil.copytree(WEB / "public", static, dirs_exist_ok=True, symlinks=True, ignore=SKIP)
     (compute / ENTRY).write_text(ENTRY_JS)
     node_major = re.match(r"v(\d+)", subprocess.run(["node", "--version"], capture_output=True, text=True, check=True).stdout).group(1)
     manifest = {
@@ -94,6 +102,12 @@ def validate(manifest: dict) -> list[tuple[str, bool, str]]:
     add("runtime is nodejs20.x/22.x/24.x", manifest["computeResources"][0]["runtime"] in {"nodejs20.x", "nodejs22.x", "nodejs24.x"}, manifest["computeResources"][0]["runtime"])
     add("compute/default <= 220 MB uncompressed", size <= MAX_COMPUTE_BYTES, f"{size / 1e6:.1f} MB")
     add("no .env files in the bundle", not list(OUT.rglob(".env*")))
+    add("no symlinks anywhere in the bundle (nothing can point outside it)", not [p for p in OUT.rglob("*") if p.is_symlink()])
+    add("entry resolves inside compute/default", (compute / ENTRY).resolve().is_relative_to(compute.resolve()))
+    add("no source maps / key material", not [p for p in OUT.rglob("*") if p.suffix in {".map", ".pem", ".key"}])
+    leak = [p.name for p in (OUT / "static").rglob("*") if p.is_file() and p.stat().st_size < 5_000_000 and any(h in p.read_bytes() for h in (str(ROOT).encode(), str(Path.home()).encode()))]
+    add("PUBLIC static tree contains no build-host paths or usernames", not leak, ",".join(leak[:3]))
+    add("every compute-referenced static route dir exists", all((OUT / "static" / "_next" / "static").is_dir() for r in routes if r["path"].startswith("/_next/static")))
     add("no native binaries (.node/.so)", not [p for p in OUT.rglob("*") if p.suffix in {".node", ".so"}])
     return res
 

@@ -7,6 +7,7 @@
 # but conformance is NOT proof that Amplify runs Next.js 16 correctly. It also needs python3.13 in the Amplify build image (UNVERIFIED).
 #
 # Audit of the previous draft (fixed here):
+#  0. v2 (2026-11-22 audit): the v1 multi-line guard used $'\n', which dash does not support, so it failed OPEN under sh; replaced by a POSIX allowlist.
 #  1. `env | grep -E '^(NEXT_PUBLIC_|...)' >> .env.production || true` matched by PREFIX (any future NEXT_PUBLIC_*/ENIGMA_* secret would be
 #     captured), APPENDED (stale/duplicate values on a cached or re-run build), and swallowed errors. Now: explicit variable NAMES, truncating write.
 #  2. baseDirectory `.next` is only right for Amplify's managed Next.js detector; the spec path needs `.amplify-hosting`.
@@ -21,7 +22,9 @@ applications:
       phases:
         preBuild:
           commands:
-            - node --version   # must be 20, 22 or 24 (Amplify runtimes); set via Live package override / nvm if not
+            # Fail fast (before any build minutes are wasted) if the build image lacks what the bundle step needs.
+            - node -e 'const m=+process.versions.node.split(".")[0]; if(![20,22,24].includes(m)){console.error("Node "+process.version+" is not an Amplify compute runtime (20/22/24)");process.exit(1)}'
+            - command -v python3.13 >/dev/null || { echo "python3.13 is missing from the Amplify build image; see docs/AWS_AMPLIFY_NEXT16.md (Node-port fallback)"; exit 1; }
             - npm ci
         build:
           commands:
@@ -30,8 +33,9 @@ applications:
               : > .env.production
               for name in NEXT_PUBLIC_COGNITO_REGION NEXT_PUBLIC_COGNITO_USER_POOL_ID NEXT_PUBLIC_COGNITO_CLIENT_ID ENIGMA_AUTH_PROVIDER ENIGMA_PUBLIC_ORIGIN ENIGMA_PUBLIC_HOST ENIGMA_API_URL; do
                 value="$(printenv "$name" || true)"
-                case "$value" in *$'\n'*|*$'\r'*) echo "refusing multi-line value for $name"; exit 1;; esac
-                [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> .env.production
+                # POSIX-portable (dash and bash): only URL/identifier characters; rejects newlines, CR, spaces, quotes, #, $ and anything else.
+                case "$value" in *[!A-Za-z0-9._:/@+-]*) echo "refusing value with unsafe characters for $name"; exit 1;; esac
+                if [ -n "$value" ]; then printf '%s=%s\n' "$name" "$value" >> .env.production; fi
               done
               chmod 600 .env.production
             - ENIGMA_STANDALONE=1 ENIGMA_DIST_DIR=.next-standalone npx next build

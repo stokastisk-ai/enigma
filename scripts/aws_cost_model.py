@@ -26,6 +26,11 @@ P = {
     "nat_h": 0.045, "nat_gb": 0.045, "ipv4_h": 0.005, "iface_endpoint_h": 0.01, "iface_endpoint_gb": 0.01,  # Price List API (AmazonEC2/AmazonVPC)
     "s3_gb_mo": 0.023, "s3_put_per_1k": 0.005,                                                          # Price List API (AmazonS3)
 }
+# Amplify Hosting list prices, fetched 2026-11-22 from https://aws.amazon.com/amplify/pricing/ (page also lists a free column: 1,000 build min, 5 GB stored,
+# 15 GB transfer, 500k SSR requests, 100 GB-h SSR duration -- applicability to THIS (older, PAID-plan) account is UNKNOWN, so only LIST is reported).
+P_AMPLIFY = {"build_min": 0.01, "storage_gb_mo": 0.023, "dto_gb": 0.15, "ssr_req_per_m": 0.30, "ssr_gb_h": 0.20}
+AMPLIFY_ASSUMPTIONS = {"builds_per_month": 20, "build_minutes": 4.0, "ssr_mem_gb": 1.0}   # ASSUMPTIONS: Amplify does not document a configurable SSR memory size
+
 FREE = {"lambda_req": 1_000_000, "lambda_gbs": 400_000, "cf_req": 10_000_000, "cf_gb": 1000, "cw_gb": 5, "cognito_mau": 10_000, "ddb_gb": 25,
         "ddb_wcu": 25, "ddb_rcu": 25}
 
@@ -139,6 +144,19 @@ def webfn_alternative(w: dict, a: dict = A) -> dict:
             "total": round(reqs / 1e6 * P["webfn_req_per_m"] + cpu_s * P["webfn_vcpu_s"] + mem_s * P["webfn_gb_s"], 2)}
 
 
+def amplify_alternative(w: dict, a: dict = A) -> dict:
+    """Same web tier on Amplify Hosting (custom deployment bundle or managed SSR). LIST prices, no free tier. Static assets are served by Amplify's CDN and
+    billed as data transfer ($0.15/GB, vs CloudFront's $0.085/GB); every page view and BFF call is an SSR request. API/DB/auth/logs are identical and excluded."""
+    v, k = volumes(w, a), AMPLIFY_ASSUMPTIONS
+    ssr_req = v["bff_req"] + v["page_views"]
+    gb_h = (v["bff_req"] * a["ms_bff"] + v["page_views"] * a["ms_ssr"]) / 1000 * k["ssr_mem_gb"] / 3600
+    gb_out = (v["page_views"] * a["page_mb"] + v["bff_req"] * a["bff_kb"] / 1024) / 1024
+    parts = {"ssr_requests": ssr_req / 1e6 * P_AMPLIFY["ssr_req_per_m"], "ssr_duration": gb_h * P_AMPLIFY["ssr_gb_h"],
+             "data_transfer": gb_out * P_AMPLIFY["dto_gb"], "builds": k["builds_per_month"] * k["build_minutes"] * P_AMPLIFY["build_min"],
+             "storage": 0.1 * P_AMPLIFY["storage_gb_mo"]}
+    return {**{n: round(x, 2) for n, x in parts.items()}, "total": round(sum(parts.values()), 2)}
+
+
 def cloudfront_comparison(a: dict = A) -> dict:
     """Web tier WITH CloudFront (assets cached, 90 % hit) vs a raw Function URL (every asset request is a Lambda invocation). LIST prices, no free tier.
     Only the delta is modelled: API, DB, auth and logs are identical in both. Security/ops differences are listed in docs, not priced."""
@@ -208,6 +226,12 @@ def markdown() -> str:
     out.append("|---|---:|---:|---:|---:|")
     for n, c in cloudfront_comparison().items():
         out.append(f"| {n} | {c['web_invocations'][0]:,} → {c['web_invocations'][1]:,} | {c['with_cloudfront']:.2f} | {c['with_cloudfront_cf_free_tier']:.2f} | {c['raw_function_url']:.2f} |")
+    out.append("\n**Web tier: Lambda Web Adapter + CloudFront vs Amplify Hosting** (web tier only, LIST prices, no free tier; Amplify prices fetched 2026-11-22; memory/build counts are ASSUMPTIONS)\n")
+    out.append("| Workload | Lambda Web Adapter + CloudFront (list) | Amplify (list) | Amplify: SSR req + duration | Amplify: transfer | Amplify: builds + storage |")
+    out.append("|---|---:|---:|---:|---:|---:|")
+    for n, w in WORKLOADS.items():
+        c, am = cloudfront_comparison()[n], amplify_alternative(w)
+        out.append(f"| {n} | {c['with_cloudfront']:.2f} | {am['total']:.2f} | {am['ssr_requests'] + am['ssr_duration']:.2f} | {am['data_transfer']:.2f} | {am['builds'] + am['storage']:.2f} |")
     return "\n".join(out)
 
 
