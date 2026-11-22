@@ -194,8 +194,8 @@ class Connector:
                     return
                 continue
             except ApiError as e:
-                log.warning("claim rejected: %s", e.code)
-                if self._wait(2.0):
+                log.warning("claim rejected: %s", e.code)          # e.g. 429 rate limit: back off exponentially, never faster than 2 s
+                if self._wait(max(2.0, next(delays))):
                     return
                 continue
             job = r.get("job")

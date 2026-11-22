@@ -17,9 +17,9 @@ compute_boundary:
   inference_location: "user-launched Kaggle 2x NVIDIA Tesla T4 only"
 resources:
   - { id: cognito_user_pool,   type: "AWS::Cognito::UserPool",        tier: Lite, billing: "free 10k MAU (unverified for this account)",  est_low_mod_high_usd: [0.00, 0.03, 0.14] }
-  - { id: api_lambda,          type: "AWS::Lambda::Function",         runtime: python3.13, arch: x86_64, memory_mb: 512,  timeout_s: 15, reserved_concurrency: 5 }
+  - { id: api_lambda,          type: "AWS::Lambda::Function",         runtime: python3.13, arch: x86_64, memory_mb: 512,  timeout_s: 15, reserved_concurrency: "none (account limit 10; optional parameter, default 0)" }
   - { id: api_function_url,    type: "AWS::Lambda::Url",              auth: NONE, note: "public at the edge; application auth + limits are the control" }
-  - { id: web_lambda,          type: "AWS::Lambda::Function",         runtime: nodejs, arch: "arm64 or x86_64 (package is architecture independent)", memory_mb: 1024, timeout_s: 20, reserved_concurrency: 5, package: "Next.js 16 standalone + Lambda Web Adapter layer" }
+  - { id: web_lambda,          type: "AWS::Lambda::Function",         runtime: nodejs, arch: "arm64 or x86_64 (package is architecture independent)", memory_mb: 1024, timeout_s: 20, reserved_concurrency: "none (account limit 10; optional parameter, default 0)", package: "Next.js 16 standalone + Lambda Web Adapter layer" }
   - { id: web_function_url,    type: "AWS::Lambda::Url",              auth: NONE }
   - { id: amplify_app_option,  type: "AWS::Amplify::App",          optional: true, status: "AMPLIFY_NEXT16_BLOCKED", note: "ALTERNATIVE to web_lambda; managed SSR documents Next 12-15 only; needs separate approval of build minutes, SSR requests, egress, logs (docs/AWS_AMPLIFY_NEXT16.md). Connecting a branch makes every push a billable build." }
   - { id: cloudfront,          type: "AWS::CloudFront::Distribution", optional: true, note: "decision pending: a raw Function URL is cheaper at list prices; CloudFront only wins if its free tier applies (docs/AWS_COST_MATRIX.md)" }

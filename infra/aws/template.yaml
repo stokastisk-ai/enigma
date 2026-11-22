@@ -13,7 +13,9 @@ Parameters:
   AllowedOrigins: { Type: String, Description: "Exact web origin(s) for the Function URL CORS header only (the API code does not read it); CORS is NOT authentication" }
   CodeBucket: { Type: String, Description: "Existing bucket holding the build artifact (not created here)" }
   CodeKey: { Type: String }
+  ReservedConcurrency: { Type: Number, Default: 0, MinValue: 0, MaxValue: 5, Description: "0 = no reservation (omitted). Raise only after a Service Quotas increase of the account concurrency limit; never above 5." }
 Conditions:
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
   UseDynamo: !Equals [!Ref StoreKind, dynamodb]
 Resources:
   ApiLogs:
@@ -43,7 +45,7 @@ Resources:
       Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
       MemorySize: 256
       Timeout: 15                     # short requests only; no workers, no held-open streams
-      ReservedConcurrentExecutions: 5 # hard bound on parallel invocations (cost and DB-connection cap)
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref "AWS::NoValue"]   # OFF by default: this account's Lambda limit is 10, and Lambda requires 10 to stay unreserved, so ANY reservation would fail the deploy (see docs/AWS_SESSION_COST.md)
       Environment:
         Variables:
           ENIGMA_ENV: production

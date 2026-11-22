@@ -10,7 +10,7 @@ Browser ─HTTPS─► CloudFront (default *.cloudfront.net domain; caches /_nex
                      └─► Lambda Function URL ─► Lambda: Next.js 16 standalone via Lambda Web Adapter (Node, ARM64, 1 GB)
                                                     │  Cognito cookies (httpOnly), BFF /api/enigma/*, /api/auth/*
                                                     ▼ Bearer <Cognito access token>
-Kaggle connector ─outbound HTTPS─► Lambda Function URL ─► Lambda: FastAPI + Mangum (Python 3.13, x86, 512 MB, reserved concurrency 5)
+Kaggle connector ─outbound HTTPS─► Lambda Function URL ─► Lambda: FastAPI + Mangum (Python 3.13, x86, 512 MB, no reservation (account limit is 10; see docs/AWS_SESSION_COST.md))
                                                     │ verifies Cognito JWT (pinned JWKS, no network), membership, tenant ids
                                                     ▼
                           Track A: RDS PostgreSQL (current supported major) db.t4g.micro, PRIVATE, same VPC      (implemented, tested)
@@ -33,8 +33,8 @@ No NAT gateway, no public IPv4, no interface endpoints, no Secrets Manager, no A
 | # | Resource | Config | Monthly (list) | Created by |
 |---|---|---|---:|---|
 | 1 | Cognito user pool + **public** app client | Lite tier, email sign-up, `ALLOW_USER_PASSWORD_AUTH`+`ALLOW_REFRESH_TOKEN_AUTH`, no client secret, default email sender | 0 (≤10k MAU free) | CLI/IaC after approval |
-| 2 | Lambda `enigma-api` | python3.13, x86, 512 MB, 15 s, **reserved concurrency 5**, VPC-attached only for Track A | ≈0.0–0.6 | `infra/aws/template.yaml` (draft) |
-| 3 | Lambda `enigma-web` | Node, ARM64, 1 GB, Web Adapter layer, standalone bundle + static assets, timeout 20 s, reserved concurrency 5 | ≈0.0–0.5 | not yet drafted |
+| 2 | Lambda `enigma-api` | python3.13, x86, 512 MB, 15 s, **no reserved concurrency** (account limit 10), VPC-attached only for Track A | ≈0.0–0.6 | `infra/aws/template.yaml` (draft) |
+| 3 | Lambda `enigma-web` | Node, ARM64, 1 GB, Web Adapter layer, standalone bundle + static assets, timeout 20 s, no reserved concurrency | ≈0.0–0.5 | not yet drafted |
 | 4 | 2 × Function URL | AuthType NONE (public at the edge; app auth + limits are the control) | 0 (no listed charge) | template |
 | 5 | CloudFront distribution | default domain, origin = web Function URL (no viewer `Host` forwarding), caching for `/_next/static/*` | 0–3.8 | not yet drafted |
 | 6 | CloudWatch log groups (2) | retention 7 days; no custom metrics/alarms | 0.0–0.5 | template |
@@ -45,7 +45,7 @@ No NAT gateway, no public IPv4, no interface endpoints, no Secrets Manager, no A
 | 10 | AWS Budget + email alert (optional) | notification only — **not a spending cap** | 0 (first budgets free; verify) | needs your OK |
 
 ## 4. Hard cost controls to build in before any approval is exercised
-- Lambda **reserved concurrency** 5 (API) and 5 (web) bounds parallel invocations and DB connections.
+- The account-wide Lambda concurrency limit (10) bounds parallel invocations; per-function reserved concurrency is optional (`ReservedConcurrency` parameter, default 0) because Lambda must keep 10 unreserved.
 - Connector claim-poll backoff (5 s idle) to cut API volume about 38 % at the ceiling workload; not yet implemented.
 - Log retention 7 days; no custom metrics; no alarms except one budget notification.
 - A one-command **teardown script** (delete in reverse order; verify empty with the same read-only list calls) must exist and be tested against the template *before* anything is created; deletion order and the RDS final-snapshot choice are in §7.

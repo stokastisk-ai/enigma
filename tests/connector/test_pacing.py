@@ -100,7 +100,7 @@ def test_config_env_and_validation(monkeypatch):
     env = {"ENIGMA_API_URL": "https://api.example", "ENIGMA_RUNTIME_TOKEN": TOKEN, "ENIGMA_CLAIM_POLL_IDLE_S": "5", "ENIGMA_CLAIM_POLL_S": "0.5", "ENIGMA_CLAIM_HOT_WINDOW_S": "45"}
     c = Config.from_env(env)
     assert (c.claim_poll_s, c.claim_poll_idle_s, c.claim_hot_window_s) == (0.5, 5.0, 45.0)
-    assert Config.from_env({k: v for k, v in env.items() if "CLAIM" not in k}).claim_poll_idle_s == 0.0      # default: back-off off
+    assert Config.from_env({k: v for k, v in env.items() if "CLAIM" not in k}).claim_poll_idle_s == 5.0      # default (2026-11-22): conservative idle ceiling
     for bad in ({"ENIGMA_CLAIM_POLL_IDLE_S": "999"}, {"ENIGMA_CLAIM_POLL_S": "0.001"}, {"ENIGMA_CLAIM_POLL_S": "abc"}):
         with pytest.raises(ConfigError):
             Config.from_env({**env, **bad})

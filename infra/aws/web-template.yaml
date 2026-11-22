@@ -14,6 +14,9 @@ Parameters:
   CognitoAppClientId: { Type: String, AllowedPattern: "^[A-Za-z0-9]{10,64}$" }
   ApiUrl: { Type: String, AllowedPattern: "^https://[A-Za-z0-9.-]+/?$", Description: "Base URL of the API Function URL (the BFF's upstream)" }
   PublicHost: { Type: String, AllowedPattern: "^[A-Za-z0-9.-]*$", Default: "", Description: "Hostname users reach (CSRF check). Empty on first create: the Function URL host is only known after creation, so set it by a stack UPDATE. Never leave empty in production." }
+  ReservedConcurrency: { Type: Number, Default: 0, MinValue: 0, MaxValue: 5, Description: "0 = no reservation (omitted). Raise only after a Service Quotas increase of the account concurrency limit; never above 5." }
+Conditions:
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, 0]]
 Resources:
   WebLogs:
     Type: AWS::Logs::LogGroup
@@ -42,7 +45,7 @@ Resources:
       Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
       MemorySize: 1024
       Timeout: 20
-      ReservedConcurrentExecutions: 5 # hard cost/abuse bound
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref "AWS::NoValue"]   # OFF by default: this account's Lambda limit is 10, and Lambda requires 10 to stay unreserved, so ANY reservation would fail the deploy (see docs/AWS_SESSION_COST.md)
       Environment:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap

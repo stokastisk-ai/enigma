@@ -138,3 +138,9 @@ Evidence limits unchanged: real Amplify, LWA, CloudFront, Cognito, DynamoDB, Kag
 ## 2026-11-22 (session 3): connector contract fix, teardown script, web-tier IaC draft, notebook governance
 - pytest: 448 passed, 6 skipped (same 5 live-Clerk + 1 remote-only GPU skips); new tests: `test_aws_teardown.py` (9, fake aws runner, no AWS call), `test_kaggle_notebook.py` (5, static), `test_iac_governance.py` +3 (web template), `test_executor.py` +1 (chunk_count, never token_count).
 - NOT RUN: real AWS (no resource exists), Kaggle GPU (build 5 / TP=1 / TP=2), browser→AWS→Kaggle path. See `docs/E2E_DATA_FLOW.md`.
+
+## 2026-11-22 (session 4): session-aware polling, cost estimator, teardown audit
+- pytest 462 passed, 6 skipped (5 live-Clerk, 1 remote-only GPU); `tsc` and eslint clean; Node unit 17/17 (`lib/session.test.ts` added); mock Playwright 16/16 (the offline test now also asserts the metrics endpoints are not polled while offline; reconnect timeout 60 s because the idle runtime-list poll is 30 s).
+- New/extended: `tests/test_aws_session_cost.py` (6), `tests/test_aws_teardown.py` (14: incomplete deletion, DELETE_FAILED residue, forbidden types in a stack, billable look-alike sweep, denied checks reported as unchecked), `tests/test_iac_governance.py` (cost-surface guards).
+- Real finding from a read-only call: Lambda account concurrency limit is 10 -> reserved concurrency (previously 5 in both templates) would fail deployment; now an optional parameter defaulting to 0.
+- NOT RUN: any real AWS resource, Kaggle GPU, browser->AWS->Kaggle path. Cost figures are model estimates (`scripts/aws_session_cost.py`).

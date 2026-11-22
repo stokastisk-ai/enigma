@@ -8,14 +8,16 @@ export type PollState<T> = { data: T | null; error: ApiFailure | null; loading: 
  * Poll a fetcher. Keeps the last good data on failure and flags it `stale` so the UI can say "showing data from 12s ago" instead of
  * silently presenting old numbers as current. Pauses while the tab is hidden. `deps` restart the poller (e.g. project / range change).
  */
-export function usePoll<T>(fetcher: ((signal: AbortSignal) => Promise<T>) | null, intervalMs: number, deps: unknown[]): PollState<T> {
+export function usePoll<T>(fetcher: ((signal: AbortSignal) => Promise<T>) | null, intervalMs: number, deps: unknown[], nextIntervalMs?: (data: T | null) => number): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<ApiFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const fetcherRef = useRef(fetcher);
-  useEffect(() => { fetcherRef.current = fetcher; });          // keep the latest fetcher without restarting the poller
+  const nextRef = useRef(nextIntervalMs);
+  const dataRef = useRef<T | null>(null);
+  useEffect(() => { fetcherRef.current = fetcher; nextRef.current = nextIntervalMs; });          // keep the latest fetcher without restarting the poller
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
@@ -29,12 +31,12 @@ export function usePoll<T>(fetcher: ((signal: AbortSignal) => Promise<T>) | null
       try {
         const d = await fetcherRef.current!(ctl.signal);
         if (cancelled) return;
-        setData(d); setError(null); setUpdatedAt(Date.now());
+        dataRef.current = d; setData(d); setError(null); setUpdatedAt(Date.now());
       } catch (e) {
         if (cancelled || (e as Error).name === "AbortError") return;
         setError(e instanceof ApiFailure ? e : new ApiFailure(0, "unknown", "Unexpected error"));
       } finally {
-        if (!cancelled) { setLoading(false); if (intervalMs > 0) timer = setTimeout(run, intervalMs); }
+        if (!cancelled) { setLoading(false); const ms = nextRef.current ? nextRef.current(dataRef.current) : intervalMs; if (ms > 0) timer = setTimeout(run, ms); }
       }
     };
     run();

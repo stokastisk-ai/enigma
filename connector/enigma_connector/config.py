@@ -31,7 +31,7 @@ class Config:
     upload_interval_s: float = 5.0
     heartbeat_interval_s: float = 10.0
     claim_poll_s: float = 1.0                            # fast poll (also the idle poll unless claim_poll_idle_s is larger)
-    claim_poll_idle_s: float = 0.0                       # 0 = same as claim_poll_s (no back-off). e.g. 5.0 cuts claim polls ~72 % (API invocations ~35 %) at ~5 s worst-case pickup; saves < USD 0.4/mo
+    claim_poll_idle_s: float = 5.0                       # conservative idle ceiling (default since 2026-11-22); 0 = same as claim_poll_s (no back-off). e.g. 5.0 cuts claim polls ~72 % (API invocations ~35 %) at ~5 s worst-case pickup; saves < USD 0.4/mo
     claim_hot_window_s: float = 30.0                     # poll fast this long after start / after any job
     flush_interval_s: float = 0.15                       # token batching window for the browser stream
     keepalive_s: float = 5.0                             # lease renewal while the model is still prefilling

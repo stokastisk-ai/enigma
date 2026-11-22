@@ -37,7 +37,7 @@ Never created: EC2/GPU, SageMaker, Bedrock, NAT, ALB, Route53, Secrets Manager, 
 | low (10 Kaggle h, 500 views, 2 MAU) | $0.37/mo | $1.26/mo | Free tiers would lower A to ≈$0; applicability UNKNOWN |
 | moderate | $2.40 | $3.87 | |
 | high (130 h, 30k views, 25 MAU) | $7.44 | $10.80 | |
-Unbounded risks: public Function URLs / Amplify endpoints can be hit by anyone (billable requests); reserved concurrency 5 bounds Lambda only; no WAF planned ($15/mo+ if added); log ingestion; forgotten parity table; Amplify build minutes. Credits ($99.99 reported, expiry unknown) are not a cap. **Suggested ceiling to approve: $10/month for Path A**, with a console-set Budget alert at $5 (notification only).
+Unbounded risks: public Function URLs / Amplify endpoints can be hit by anyone (billable requests); the account-wide Lambda limit (10) bounds Lambda only (reserved concurrency cannot be used on this account); no WAF planned ($15/mo+ if added); log ingestion; forgotten parity table; Amplify build minutes. Credits ($99.99 reported, expiry unknown) are not a cap. **Suggested ceiling to approve: $10/month for Path A**, with a console-set Budget alert at $5 (notification only).
 
 ## 4. Teardown (reverse order; verify each with read-only list calls)
 CloudWatch dashboard → CloudFront (disable, wait, delete) → web Function URL → `enigma-web` → API Function URL → `enigma-api` → parity/real DynamoDB tables → log groups → Cognito pool → empty+delete S3 bucket → IAM roles. Path B first: delete Amplify branch/app, then remove the Amplify GitHub App grant. Parity runs auto-delete their stack; verify in console. A tested teardown script is still **TODO** (required by `docs/AWS_DEPLOYMENT.md` §1 before provisioning).

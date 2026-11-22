@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, ApiFailure } from "@/lib/api";
 import { usePoll } from "@/hooks/use-poll";
+import { RUNTIME_POLL_LIVE_MS, runtimeListPollMs } from "@/lib/session";
 import type { Project, Runtime, Workspace } from "@/lib/types";
 
 export const RANGES = ["5m", "15m", "1h", "6h", "24h", "7d"] as const;
@@ -51,7 +52,7 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
   const projects = useMemo(() => projPoll.data?.items ?? [], [projPoll.data]);
   const project = useMemo(() => projects.find((p) => p.id === projId) ?? projects[0] ?? null, [projects, projId]);
 
-  const rtPoll = usePoll<{ items: Runtime[] }>(project ? (s) => api(`projects/${project.id}/runtimes`, { signal: s }) : null, 5000, [project?.id]);
+  const rtPoll = usePoll<{ items: Runtime[] }>(project ? (s) => api(`projects/${project.id}/runtimes`, { signal: s }) : null, RUNTIME_POLL_LIVE_MS, [project?.id], (d) => runtimeListPollMs((d?.items ?? []).map((r) => r.status)));
   const runtimes = useMemo(() => rtPoll.data?.items ?? [], [rtPoll.data]);
   const runtime = useMemo(() => runtimes.find((r) => r.id === rtId) ?? runtimes.find((r) => r.status === "online") ?? runtimes[0] ?? null, [runtimes, rtId]);
 

@@ -68,8 +68,15 @@ test("offline is detected, chat is disabled, and reconnect recovers", async ({ p
   await expect(page.getByTestId("offline-banner")).toBeVisible();
   await expect(page.getByTestId("prompt-input")).toBeDisabled();
   await expect(page.getByTestId("msg-assistant").first()).toBeVisible();     // history still readable offline
+  // session-aware polling: while no runtime is live the dashboards load ONCE and stop polling (each request is billed on AWS)
+  let metricHits = 0;
+  page.on("request", (r) => { if (/\/metrics\/(gpu|vllm)|\/overview/.test(r.url())) metricHits++; });
+  await page.goto("/app/gpus");
+  await page.waitForTimeout(12_000);                                          // > 2 poll periods at the live 5 s cadence
+  expect(metricHits, "metrics must not be polled while the runtime is offline").toBeLessThanOrEqual(3);   // one initial load per hook, no timer
+  await page.goto("/app/playground");
   conn = startConnector(token);
-  await expect(page.getByTestId("runtime-status").first()).toHaveAttribute("data-status", "online", { timeout: 40_000 });
+  await expect(page.getByTestId("runtime-status").first()).toHaveAttribute("data-status", "online", { timeout: 60_000 });   // idle runtime-list poll is 30 s
   await expect(page.getByTestId("prompt-input")).toBeEnabled();
 });
 

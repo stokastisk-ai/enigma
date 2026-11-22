@@ -65,7 +65,7 @@ def test_template_parses_and_contains_no_forbidden_resources(path):
 def test_lambda_function_is_cpu_only_and_python_313():
     doc = yaml.load((INFRA / "template.yaml").read_text(), Loader=_L)
     fn = doc["Resources"]["ApiFunction"]["Properties"]
-    assert fn["Runtime"] == "python3.13" and fn["ReservedConcurrentExecutions"] <= 5 and "Layers" not in fn
+    assert fn["Runtime"] == "python3.13" and "Layers" not in fn
     assert not any(r["Type"] == "AWS::Lambda::Function" and "Image" in str(r["Properties"].get("PackageType", "")) for r in doc["Resources"].values())
 
 

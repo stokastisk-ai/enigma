@@ -135,7 +135,7 @@ def test_web_template_is_cpu_only_minimal_and_bounded():
     assert types == {"AWS::Logs::LogGroup", "AWS::IAM::Role", "AWS::Lambda::Function", "AWS::Lambda::Url", "AWS::Lambda::Permission"}
     assert not any(re.match(p.replace("*", ".*"), ty) for ty in types for p in ("AWS::EC2::.*", "AWS::SageMaker::.*", "AWS::Bedrock::.*", "AWS::ECS::.*", "AWS::EKS::.*", "AWS::CloudFront::.*"))
     fn = t["Resources"]["WebFunction"]["Properties"]
-    assert fn["ReservedConcurrentExecutions"] <= 5 and fn["Timeout"] <= 30 and fn["Runtime"].startswith("nodejs")
+    assert fn["Timeout"] <= 30 and fn["Runtime"].startswith("nodejs")
     assert t["Resources"]["WebLogs"]["Properties"]["RetentionInDays"] == 7
 
 
@@ -149,3 +149,41 @@ def test_web_template_holds_no_secret_or_pinned_account_value():
 def test_web_role_is_logs_only():
     stmts = _web_template()["Resources"]["WebRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
     assert [s["Action"] for s in stmts] == [["logs:CreateLogStream", "logs:PutLogEvents"]]
+
+
+# ---- cost surface of every CloudFormation template (session-based, pay-per-use only) ----
+def _all_templates():
+    return sorted(p for p in (ROOT / "infra/aws").glob("*.yaml") if "AWSTemplateFormatVersion" in p.read_text())
+
+
+def test_no_template_creates_always_billed_or_metered_extras():
+    """No provisioned concurrency, WAF, CloudFront, alarms, metric filters/EMF, canaries, NAT/ALB/EC2/RDS: nothing that bills while Kaggle is offline."""
+    banned = re.compile(r"ProvisionedConcurrency|AWS::WAF|AWS::CloudFront::|AWS::CloudWatch::(Alarm|CompositeAlarm|InsightRule|AnomalyDetector)|AWS::Logs::MetricFilter|"
+                        r"AWS::Synthetics|AWS::EC2::|AWS::RDS::|AWS::ElasticLoadBalancing|AWS::Events::Rule|AWS::Scheduler|AWS::SecretsManager|AWS::KMS::Key|"
+                        r"AWS::ApplicationAutoScaling|AWS::StepFunctions|AWS::SQS|AWS::Kinesis|AWS::Route53|AWS::XRay|TracingConfig")
+    assert _all_templates()
+    for p in _all_templates():
+        hits = banned.findall(p.read_text())
+        assert not hits, f"{p.name}: {hits}"
+
+
+def test_reserved_concurrency_is_optional_and_off_by_default():
+    """This account's Lambda limit is 10 and 10 must stay unreserved, so a reservation fails the deploy; the parameter defaults to 0 (omitted)."""
+    for name in ("template.yaml", "web-template.yaml"):
+        t = yaml.load((ROOT / "infra/aws" / name).read_text(), Loader=_CfnLoader)
+        p = t["Parameters"]["ReservedConcurrency"]
+        assert p["Default"] == 0 and p["MaxValue"] <= 5
+
+
+def test_log_groups_have_short_retention_and_dynamodb_defaults_to_on_demand_without_pitr():
+    for p in _all_templates():
+        t = yaml.load(p.read_text(), Loader=_CfnLoader)
+        for r in t["Resources"].values():
+            if r["Type"] == "AWS::Logs::LogGroup":
+                assert 1 <= r["Properties"]["RetentionInDays"] <= 14
+            if r["Type"] == "AWS::DynamoDB::Table":
+                if p.name == "dynamodb-parity.yaml":      # throwaway table, deleted right after the parity run: capacity must stay inside the 25/25 allowance
+                    assert r["Properties"]["BillingMode"] == "PROVISIONED" and t["Parameters"]["ReadCapacity"]["MaxValue"] <= 25 and t["Parameters"]["WriteCapacity"]["MaxValue"] <= 25
+                else:
+                    assert t["Parameters"]["BillingMode"]["Default"] == "PAY_PER_REQUEST"
+                assert r["Properties"]["PointInTimeRecoverySpecification"]["PointInTimeRecoveryEnabled"] is False
