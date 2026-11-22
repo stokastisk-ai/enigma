@@ -133,7 +133,7 @@ class JobExecutor:
         def flush(force_keepalive: bool = False) -> None:
             nonlocal seq, pending, last_flush, last_send, first_flushed, cancelled, offline_since
             if pending:
-                unacked.append({"event_seq": seq, "kind": "delta", "text": "".join(pending), "token_count": len(pending)})
+                unacked.append({"event_seq": seq, "kind": "delta", "text": "".join(pending), "chunk_count": len(pending)})   # chunks, NOT tokens: the stream does not report token counts
                 seq += 1
                 pending = []
                 first_flushed = True

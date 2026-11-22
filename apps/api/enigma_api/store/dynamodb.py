@@ -673,7 +673,7 @@ class DynamoStore(Store):
                     break
                 kind = e.get("kind", "delta")
                 new_events.append({"PK": f"JOB#{job_id}", "SK": f"EVT#{seq:010d}", "job_id": job_id, "event_seq": seq, "workspace_id": j["workspace_id"], "kind": kind,
-                                   "text": e.get("text"), "token_count": e.get("token_count"), "emitted_at": e.get("emitted_at"), "received_at": now,
+                                   "text": e.get("text"), "token_count": e.get("token_count"), "chunk_count": e.get("chunk_count"), "emitted_at": e.get("emitted_at"), "received_at": now,
                                    "_t": "event", "ttl": int(now.timestamp()) + self._ev_ttl_s})
                 event_count += 1
                 if kind == "reset":

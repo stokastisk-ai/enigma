@@ -191,3 +191,24 @@ def test_revoked_token_mid_job_is_fatal(tenant, api, cfg):
 def test_mock_llm_marks_output_and_respects_max_tokens():
     out = "".join(MockLlm(0, 0).stream([{"role": "user", "content": "hi there"}], max_tokens=5, temperature=0, model=None))
     assert out.startswith("[MOCK MODEL") and len(out.split()) <= 5
+
+
+def test_events_report_chunk_counts_never_token_counts(tenant, api, cfg):
+    """Chunks are not tokens: the connector must send `chunk_count` and must never fill the server-reported-only `token_count`."""
+    conv, job_id, job = submit_and_claim(tenant, api)
+    sent: list[dict] = []
+    real_post = api.post
+
+    def spy(path, body=None, *a, **k):
+        if path.endswith("/events"):
+            sent.extend(body["events"])
+        return real_post(path, body, *a, **k) if body is not None else real_post(path, *a, **k)
+
+    api.post = spy
+    try:
+        assert JobExecutor(api, ScriptedLlm([f"w{i} " for i in range(40)], delay=0.003), cfg, is_mock=True).run(job) == "succeeded"
+    finally:
+        api.post = real_post
+    deltas = [e for e in sent if e["kind"] == "delta"]
+    assert deltas and all("token_count" not in e for e in deltas)
+    assert sum(e["chunk_count"] for e in deltas) == 40

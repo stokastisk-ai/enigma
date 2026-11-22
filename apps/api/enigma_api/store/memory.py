@@ -306,7 +306,7 @@ class MemoryStore(Store):
                     return {"error": "cap_exceeded"}
                 kind = e.get("kind", "delta")
                 self.events[job_id].append({"job_id": job_id, "event_seq": seq, "workspace_id": j["workspace_id"], "kind": kind, "text": e.get("text"),
-                                            "token_count": e.get("token_count"), "emitted_at": e.get("emitted_at"), "received_at": self.now()})
+                                            "token_count": e.get("token_count"), "chunk_count": e.get("chunk_count"), "emitted_at": e.get("emitted_at"), "received_at": self.now()})
                 event_count += 1
                 if kind == "reset":
                     text_chars = 0

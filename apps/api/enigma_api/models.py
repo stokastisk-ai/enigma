@@ -172,7 +172,8 @@ class EventIn(Strict):
     event_seq: int = Field(ge=1, le=1_000_000)
     kind: Literal["delta", "reset", "status"] = "delta"
     text: str | None = Field(default=None, max_length=8192)
-    token_count: int | None = Field(default=None, ge=0, le=100000)
+    token_count: int | None = Field(default=None, ge=0, le=100000)   # ONLY a server-reported exact token count; connectors must not fill it from chunks
+    chunk_count: int | None = Field(default=None, ge=0, le=100000)   # number of SSE content chunks coalesced into this event (NOT tokens)
     emitted_at: datetime | None = None
 
 
