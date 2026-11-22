@@ -673,3 +673,40 @@ Report matrix: source and current private Git SHA/remote sync; exact Python inte
 - **Evidence docs:** `docs/AWS_AMPLIFY_NEXT16.md` (support decision), `docs/AWS_WEB_TIER_COMPARISON.md` (Lambda Web Adapter vs custom Amplify bundle), `docs/AWS_DEPLOYMENT_READINESS.md` (inventory, exposure, teardown, approvals). Both web-tier paths stay in the repo until the owner approves one.
 - **External triggers:** the org has a Vercel GitHub App with access to all repositories and `push` events. Commit `2c8d202` produced no status, check-run or deployment, so no project is linked today; the owner should confirm in the Vercel dashboard. No AWS-side trigger exists (0 Amplify apps, 0 stacks, 0 webhooks, 0 workflows).
 - Local passing of `scripts/build_amplify_bundle.py` or `scripts/validate_nextjs_lambda.py` is never evidence of real AWS compatibility.
+
+## Section 20 — Enigma $20 monthly AWS spending monitor (2026-11-22)
+
+This section supplements all prior non-root, privacy, GPU, Kaggle, GitHub and AWS deployment rules. It does not grant deployment approval and never overrides a stricter prohibition in existing sections.
+
+### Exact owner intent
+- Protect approximately $99 remaining AWS promotional credits. The owner wants approximately 1–2-hour user-started Kaggle 2x Tesla T4 inference sessions, not a continuously running AWS server.
+- The requested **USD $20/month AWS Budget** is a *warning/monitoring target*, **not an enforced spending cap**. Do not claim a notification budget guarantees maximum charges. AWS costs can be delayed by 8–12 hours or more, and ongoing charges may exceed a threshold before alerts.
+- Do not presume that the owner has authorized $20 spending; a $20 budget is not approval to deploy or spend $20. Deployment requires the prior charter's separately reviewed resource manifest, region, credit expiry/eligibility, cost risk and explicit owner approval.
+
+### Configuration requirements
+- Account-wide monthly *recurring*, *fixed* **Cost** budget named `Enigma-Monthly-USD20`, USD 20, scope **All AWS services**, metric **Unblended costs** to alert on gross consumption prior to credits. Confirm console metric semantics and available selections. Also inspect net charges and credit usage separately in Billing.
+- Email alerts for **ACTUAL spend at 25% ($5), 50% ($10), 75% ($15), 100% ($20)**; optionally 100% FORECAST if supported for monthly budgets. Confirm each email subscription rather than only creating thresholds.
+- Do not enable automatic budget actions, SNS, paid tools or account restrictions unless separately evaluated and explicitly approved. Budget alerts and cost models are not hard limits.
+- Verify Budget exists and is active in the AWS Budgets list, notification recipients, and billing reports; do not treat the editor preview as evidence of successful save.
+- Verify credit expiry and applicability under Billing → Credits. Do not infer remaining credit from earlier $99.99 snapshot.
+
+### Architecture and control
+- The AWS Next.js 16 web tier and FastAPI Python 3.13 API must use only on-demand request metering without provisioned concurrency, AWS GPUs, RDS, NAT, ALB, paid WAF or idle EC2. Preserve Cognito, DynamoDB on-demand, and Kaggle-only Stokastisk runtime.
+- Keep app protected during Kaggle-offline periods. Neither an Amplify disabled auto-build setting nor stopping Kaggle disables an Amplify SSR site.
+- Continue using only `/usr/local/bin/python3.13`; never touch the laptop GeForce 940M. Use the explicit non-root SSO profile `enigma-deployer`, proposed region `us-east-1` (not deployed/approved by this section).
+- The `scripts/enigma_aws_budget_audit.py` utility is strictly read-only for AWS. Never switch to root/default access if a billing API returns AccessDenied. Never publish account IDs, keys, credentials, billing files or account-specific metadata to public GitHub or prompts.
+- Avoid writing raw secrets into CloudWatch, `.env.production`, artifacts, or Git. Preserve private `stokastisk-ai/enigma` and existing history; reviewed normal fast-forward pushes are allowed only when safe.
+
+### Reporting and gates
+- Report each check as confirmed by AWS API, confirmed by billing screenshot, locally tested, or unknown. Do not equate a dry run, a fake test runner, or a forecast with actual AWS cost exposure.
+- Before deployment, confirm: Budget active and recipients confirmed; credit expiry and plan; estimated monthly *maximum risk* (not guaranteed cap); AWS Region; full resource inventory and teardown; explicit owner approval; safe Lambda Function URL permissions and public-endpoint abuse controls.
+
+## Section 21 — Verified $20 budget state (2026-11-22, read-only AWS evidence)
+
+- `Enigma-Monthly-USD20` exists: COST, MONTHLY, 20 USD, recurring, healthy; one alert only (ACTUAL > 25 % = $5, 1 e-mail subscriber). `My Zero-Spend Budget` ($1) is intact. No budget actions exist. Recommended extra ACTUAL alerts at $10/$15/$20 are NOT configured; the owner adds them in the console. Never create a second $20 budget; never modify budgets from code.
+- **Both budgets use `IncludeCredit: true` (net of credits)**, so they will not alert while credits absorb charges. Owner should untick *Credits* in the console.
+- Plan API: `PAID`/`ACTIVE`, remaining plan credits 0.0 (conflicts with the ~$99 the owner saw). `billing:GetCredits` is denied ("IAM user access not activated"). Credit balance, expiry, eligible services and Free Tier applicability are `UNVERIFIED — AWS BILLING CONSOLE REQUIRED`. Never estimate an expiry, never use root keys to read billing.
+- Month-to-date (1–22 Nov): gross ≈ $0.00004, net $0. Nothing is deployed.
+- `scripts/enigma_aws_budget_audit.py` exit codes: 0 verified, 2 refused, 10 missing, 11 misconfigured, 12 permission denied, 13 unverified; output never contains account IDs, ARNs or e-mails. Details: `docs/AWS_BUDGET_VERIFICATION.md`.
+- API Lambda memory in `infra/aws/template.yaml` aligned to 512 MB (manifest and cost model already assumed 512).
+- Open pre-deploy item: confirm whether public Function URLs now also need a `lambda:InvokeFunction` permission statement (docs/AWS_SESSION_COST.md §4).

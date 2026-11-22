@@ -7,7 +7,7 @@
 |---|---|
 | Non-root identity (`enigma-deployer`, assumed-role, explicit `--profile/--region`) | VERIFIED today; root-key removal PENDING (owner) |
 | Next.js 16 managed Amplify support | NOT DOCUMENTED (12–15 only); custom bundle locally conformant, **not proof** |
-| Web-tier IaC (LWA path) | NOT DRAFTED (`template.yaml` = API Lambda only) |
+| Web-tier IaC (LWA path) | DRAFTED offline (`infra/aws/web-template.yaml`), governance-tested, NOT deployed |
 | Region | `us-east-1` PROPOSED, not approved |
 | Plan / credits / expiry / Free Tier | UNKNOWN (owner reads Billing → Credits); budgets are not caps |
 | Dollar ceiling, per-resource written approval | NOT GIVEN |
@@ -20,9 +20,9 @@ Preferred first live test = **Path A**, Track B (DynamoDB). Region `us-east-1`.
 |---|---|---|---|
 | 1 | Cognito user pool + app client | Lite tier, no hosted UI, no secret in browser | public ids only in env |
 | 2 | DynamoDB table `enigma-dev` | on-demand or 25/25 provisioned, TTL attr, PITR off | after throwaway `enigma-parity-*` real-parity table (<$0.01) |
-| 3 | Lambda `enigma-api` | python3.13, x86_64, 512 MB, 15 s, reserved conc. 5 | no GPU libs |
+| 3 | Lambda `enigma-api` | python3.13, x86_64, 512 MB, 15 s, no reserved concurrency (account limit 10) | no GPU libs |
 | 4 | Lambda Function URL (API) | auth NONE + app JWT | public at edge |
-| 5 | Lambda `enigma-web` | nodejs22.x/24.x, ARM64, 1 GB, 20 s, reserved conc. 5, LWA layer | **IaC to be written offline** |
+| 5 | Lambda `enigma-web` | nodejs22.x/24.x, ARM64, 1 GB, 20 s, no reserved concurrency, LWA layer | IaC: `infra/aws/web-template.yaml` (draft) |
 | 6 | Lambda Function URL (web) / CloudFront (optional) | OAC or secret origin header if CloudFront | decision pending |
 | 7 | CloudWatch log groups ×2 | retention 7 days | no custom metrics |
 | 8 | S3 bucket | Lambda zips only, block public access, SSE | lifecycle expiry |
@@ -40,7 +40,7 @@ Never created: EC2/GPU, SageMaker, Bedrock, NAT, ALB, Route53, Secrets Manager, 
 Unbounded risks: public Function URLs / Amplify endpoints can be hit by anyone (billable requests); the account-wide Lambda limit (10) bounds Lambda only (reserved concurrency cannot be used on this account); no WAF planned ($15/mo+ if added); log ingestion; forgotten parity table; Amplify build minutes. Credits ($99.99 reported, expiry unknown) are not a cap. **Suggested ceiling to approve: $10/month for Path A**, with a console-set Budget alert at $5 (notification only).
 
 ## 4. Teardown (reverse order; verify each with read-only list calls)
-CloudWatch dashboard → CloudFront (disable, wait, delete) → web Function URL → `enigma-web` → API Function URL → `enigma-api` → parity/real DynamoDB tables → log groups → Cognito pool → empty+delete S3 bucket → IAM roles. Path B first: delete Amplify branch/app, then remove the Amplify GitHub App grant. Parity runs auto-delete their stack; verify in console. A tested teardown script is still **TODO** (required by `docs/AWS_DEPLOYMENT.md` §1 before provisioning).
+CloudWatch dashboard → CloudFront (disable, wait, delete) → web Function URL → `enigma-web` → API Function URL → `enigma-api` → parity/real DynamoDB tables → log groups → Cognito pool → empty+delete S3 bucket → IAM roles. Path B first: delete Amplify branch/app, then remove the Amplify GitHub App grant. Parity runs auto-delete their stack; verify in console. `scripts/aws_teardown.py` exists (dry-run by default, unit-tested offline; never executed against AWS).
 
 ## 5. Approvals needed from the owner (explicit, written, per operation)
 1. Region (`us-east-1` or other). 2. Path A or B (A recommended). 3. Monthly dollar ceiling. 4. Credit expiry date + plan type from Billing console. 5. Permission to write web-tier IaC and teardown script (offline, no AWS). 6. Then, per resource group, the exact AWS writes listed in §2. 7. For Path B only: widen deployer policy and install the Amplify GitHub App. 8. Confirm no Vercel project is linked to `stokastisk-ai/enigma`. 9. Root-key deactivation (owner, console, after non-root path proven). 10. Launch Kaggle 2×T4 build-5 validation yourself.

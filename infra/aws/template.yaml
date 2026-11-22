@@ -43,7 +43,7 @@ Resources:
       Handler: lambda_handler.handler
       Role: !GetAtt ApiRole.Arn
       Code: { S3Bucket: !Ref CodeBucket, S3Key: !Ref CodeKey }
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 15                     # short requests only; no workers, no held-open streams
       ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref "AWS::NoValue"]   # OFF by default: this account's Lambda limit is 10, and Lambda requires 10 to stay unreserved, so ANY reservation would fail the deploy (see docs/AWS_SESSION_COST.md)
       Environment:
