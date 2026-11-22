@@ -112,3 +112,15 @@ Interpreter `/usr/local/bin/python3.13`. Local GPU never touched (GPU libraries 
 New coverage this run: `tests/api/test_awsops.py` (26: admin authorization, honesty states, read-only/bounded AWS access against moto, cache, scrubbing, datapoint round-trip) · `tests/test_cloudwatch_dashboard.py` (15) · `tests/test_iac_governance.py` (10) · `tests/test_live_ddb_guard.py` (20) · +13 DynamoDB parity tests (pagination, Unprocessed*, conflicts, throttling, runtime cap, expiry/cancel, TTL laziness, truncation) · +9 Cognito attack tests · +1 cost-model test · `e2e/aws-admin.spec.ts`.
 **Defects found by the new tests and fixed:** `DynamoStore._batch_get` silently returned a partial list after repeated `UnprocessedKeys` (now retries with backoff and raises); an **empty `sub`** in a validly signed token was accepted (now rejected, subject validated); middleware 401/redirect lacked `Cache-Control: no-store`; shared chart wrapper nested an interactive element inside `role="img"` (axe `nested-interactive`); admin page showed "ago ago", an uptime as an age, a misleading linear topology, and "present" for synthetic rows; admin rate limit (burst 10) was tight enough to throttle normal navigation (now 30). Two earlier test failures were test bugs, not product bugs (a `/me` contract assertion updated for the new `is_admin` field; a secret-fragment assertion that broke whenever the random secret contained `_`; the full secret was verified never stored in 40 trials).
 **NOT RUN (evidence limits):** real DynamoDB (the guarded harness exists), real Lambda/CloudFront/Cognito, the Lambda Web Adapter itself, the CloudWatch dashboard in AWS, the admin page in `live` mode, Kaggle 2× T4 acceptance, browser → AWS → Kaggle end-to-end. moto is an emulator. Simulated polling latency is not measured network latency.
+
+## 2026-11-22 Amplify/Next.js 16 session (fresh runs, CPU-only, no AWS writes, local GPU untouched)
+| Check | Result |
+|---|---|
+| `/usr/local/bin/python3.13 -m pytest` (428 collected) | exit 0; 422 passed, 6 skipped (same six) |
+| `scripts/smoke_e2e.py`; `tests/sql/run_aws_sql_tests.py` | SMOKE OK; SQL suite ran clean |
+| `npm run typecheck`, `npm run lint`, `npm run test:unit` | clean; clean; 15/15 |
+| `npm run build` (Next 16.4.6) | OK, 16 routes all dynamic |
+| `npm run test:e2e` (mock) | 16 passed |
+| `scripts/validate_nextjs_lambda.py --build` | 0 failures (22.8 MB, 0 native binaries) |
+| `scripts/build_amplify_bundle.py --serve-check` | 14/14 deployment-spec checks pass; NOT proof of Amplify support |
+Verdict and sources: `docs/AWS_AMPLIFY_NEXT16.md`. Real Amplify/Lambda/Cognito/DynamoDB, Kaggle 2xT4 and browser→AWS→Kaggle E2E: NOT RUN.

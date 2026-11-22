@@ -1,5 +1,19 @@
-# Amplify Hosting build spec for the Next.js app in the apps/web monorepo folder. REVIEW DRAFT, NOT DEPLOYED.
-# BLOCKED: AWS documents Amplify SSR for Next.js 12-15 only; this repo uses Next.js 16.4.6 (see docs/AWS_COST_MATRIX.md). Do not deploy.
+# Amplify Hosting build spec for apps/web (monorepo). REVIEWED DRAFT - STATUS: AMPLIFY_NEXT16_BLOCKED. NOT DEPLOYED. DO NOT CONNECT A BRANCH.
+#
+# Why blocked: AWS documents managed Amplify SSR for Next.js 12-15 only and lists "Next.js streaming" as unsupported
+# (https://docs.aws.amazon.com/amplify/latest/userguide/ssr-amplify-support.html, inspected 2026-11-22). This repo uses Next.js 16.4.6.
+# This file is the custom *deployment-specification* path (https://docs.aws.amazon.com/amplify/latest/userguide/ssr-deployment-specification.html):
+# the standalone Next server is repackaged to .amplify-hosting/. That layout is validated offline by scripts/build_amplify_bundle.py,
+# but conformance is NOT proof that Amplify runs Next.js 16 correctly. It also needs python3.13 in the Amplify build image (UNVERIFIED).
+#
+# Audit of the previous draft (fixed here):
+#  1. `env | grep -E '^(NEXT_PUBLIC_|...)' >> .env.production || true` matched by PREFIX (any future NEXT_PUBLIC_*/ENIGMA_* secret would be
+#     captured), APPENDED (stale/duplicate values on a cached or re-run build), and swallowed errors. Now: explicit variable NAMES, truncating write.
+#  2. baseDirectory `.next` is only right for Amplify's managed Next.js detector; the spec path needs `.amplify-hosting`.
+#  3. Amplify env vars are build-time only: server-side code reads process.env at runtime, so the allowlisted PUBLIC identifiers are baked into
+#     .env.production (also copied into compute/default). Server SECRETS must never be written there; the app currently needs none
+#     (tokens live in httpOnly cookies, the API verifies JWTs with public JWKS).
+# appRoot is apps/web; artifacts.baseDirectory is relative to appRoot.
 version: 1
 applications:
   - appRoot: apps/web
@@ -7,14 +21,24 @@ applications:
       phases:
         preBuild:
           commands:
+            - node --version   # must be 20, 22 or 24 (Amplify runtimes); set via Live package override / nvm if not
             - npm ci
         build:
           commands:
-            # Public identifiers only; server secrets must come from Amplify's encrypted environment, never this file.
-            - env | grep -E '^(NEXT_PUBLIC_|ENIGMA_AUTH_PROVIDER|ENIGMA_API_URL)' >> .env.production || true
-            - npm run build
+            # Allowlist of NON-SECRET names only (public Cognito identifiers, public origin/host, API base URL). Truncate, never append.
+            - |
+              : > .env.production
+              for name in NEXT_PUBLIC_COGNITO_REGION NEXT_PUBLIC_COGNITO_USER_POOL_ID NEXT_PUBLIC_COGNITO_CLIENT_ID ENIGMA_AUTH_PROVIDER ENIGMA_PUBLIC_ORIGIN ENIGMA_PUBLIC_HOST ENIGMA_API_URL; do
+                value="$(printenv "$name" || true)"
+                case "$value" in *$'\n'*|*$'\r'*) echo "refusing multi-line value for $name"; exit 1;; esac
+                [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> .env.production
+              done
+              chmod 600 .env.production
+            - ENIGMA_STANDALONE=1 ENIGMA_DIST_DIR=.next-standalone npx next build
+            - python3.13 ../../scripts/build_amplify_bundle.py   # assembles .amplify-hosting/ per the deployment specification
+            - cp .env.production .amplify-hosting/compute/default/.env.production
       artifacts:
-        baseDirectory: .next
+        baseDirectory: .amplify-hosting
         files: ['**/*']
       cache:
-        paths: [node_modules/**/*, .next/cache/**/*]
+        paths: [node_modules/**/*, .next-standalone/cache/**/*]

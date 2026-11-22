@@ -37,3 +37,7 @@ test-results/
 # local backups / editor-agent state (never commit)
 *.backup-*
 .claude/settings.local.json
+
+# private AWS discovery metadata
+/.enigma-local/
+/apps/web/.amplify-hosting/
