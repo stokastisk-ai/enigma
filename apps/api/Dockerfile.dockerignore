@@ -3,5 +3,6 @@
 !apps/api/requirements.txt
 !apps/api/requirements-railway.txt
 !apps/api/enigma_api/
+!infra/aws/sql/
 **/__pycache__
 **/*.pyc

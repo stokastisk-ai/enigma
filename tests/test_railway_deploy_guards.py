@@ -53,7 +53,8 @@ def test_staged_api_tree_excludes_legacy_lambda_and_vercel_entrypoints(tmp_path)
     out = tmp_path / "stage_api"
     assert run(STAGE, "--service", "api", "--out", str(out)).returncode == 0
     files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
-    assert {"apps/api/Dockerfile", "apps/api/requirements-railway.txt", "apps/api/enigma_api/main.py"} <= files
+    assert {"apps/api/Dockerfile", "apps/api/requirements-railway.txt", "apps/api/enigma_api/main.py", "apps/api/enigma_api/bootstrap.py",
+            "infra/aws/sql/0001_core_schema.sql", "infra/aws/sql/0002_job_functions.sql"} <= files
     assert not files & {"apps/api/lambda_handler.py", "apps/api/index.py", "apps/api/vercel.json", "apps/api/requirements-aws.txt"}
     assert (ROOT / "apps/api/lambda_handler.py").exists()           # staging never removes the AWS/Vercel fallback from the repo
 
