@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --test lib/server/cognito.test.ts lib/session.test.ts",
+    "test:unit": "node --test lib/server/cognito.test.ts lib/session.test.ts lib/server/loopback-rewrite.test.ts lib/server/public-paths.test.ts lib/server/page-guard.test.ts lib/server/hosted-env.test.ts",
     "test:e2e": "npm run build:e2e && playwright test",
     "gen:api": "openapi-typescript ../../packages/contracts/openapi.json -o ../../packages/contracts/src/api.d.ts",
     "build:e2e": "ENIGMA_DIST_DIR=.next-e2e NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= NEXT_PUBLIC_SUPABASE_URL= next build",
@@ -43,5 +43,10 @@
     "shadcn": "^4.23.0",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@ts-morph/common": {
+      "minimatch": "11.0.9"
+    }
   }
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 UUID = "00000000-0000-0000-0000-000000000000"
-OPEN = {"/api/v1/health", "/api/v1/admin/prune"}            # health is public; prune has its own bearer-secret check (tested elsewhere)
+OPEN = {"/api/v1/health", "/api/v1/admin/prune", "/api/v1/admin/ready"}            # health is public; prune and ready have their own bearer-secret check (tested elsewhere)
 USER_ONLY_NO_TENANT = {"/api/v1/app/me", "/api/v1/app/workspaces"}          # act on the caller's own identity, no tenant id in the path
 
 

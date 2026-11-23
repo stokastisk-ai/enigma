@@ -3,8 +3,10 @@ import { ConsoleShell } from "@/components/enigma/console-shell";
 import { RealtimeBridge } from "@/components/enigma/realtime-bridge";
 import { CognitoSignOut } from "@/components/enigma/cognito-auth";
 import { clerkConfigured, cognitoSelected, devAuthAllowed } from "@/lib/server/env";
+import { requirePageSession } from "@/lib/server/page-guard";
 
-export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
+export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
+  await requirePageSession(); // resource-level check; proxy.ts is only the first line of defence
   const clerk = clerkConfigured();
   const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   // Supabase now calls this the "publishable" key; the legacy anon-key name is still accepted. Both are public by design (RLS protects the data).

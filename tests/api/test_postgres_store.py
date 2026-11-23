@@ -194,3 +194,11 @@ def test_dead_connection_recovers_for_the_next_request(store):
 
 def test_retention_prune_runs(store):
     assert "gpu_samples" in store.prune(0, 0, 0)
+
+
+def test_ready_probe_succeeds_with_the_least_privilege_role_and_fails_closed_when_unreachable(store):
+    store.ready()
+    broken = PostgresStore("host=127.0.0.1 port=1 dbname=x user=x connect_timeout=1")
+    with pytest.raises(StoreUnavailable) as e:
+        broken.ready()
+    assert "password" not in str(e.value).lower()

@@ -342,11 +342,24 @@ def run_detail(run_id: str, request: Request, user: User):
 admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
-@admin.get("/prune")
-def prune(request: Request, authorization: str | None = Header(default=None)):
-    st = state(request)
-    secret = st.settings.cron_secret
+def _require_cron_secret(request: Request, authorization: str | None) -> None:
+    secret = state(request).settings.cron_secret
     given = (authorization or "")[7:] if (authorization or "").lower().startswith("bearer ") else ""
     if not secret or not hmac.compare_digest(given.encode(), secret.encode()):
         raise ApiError(401, "unauthorized", "authentication required")
-    return st.store.prune()
+
+
+@admin.get("/prune")
+def prune(request: Request, authorization: str | None = Header(default=None)):
+    _require_cron_secret(request, authorization)
+    return state(request).store.prune()
+
+
+@admin.get("/ready")
+def ready(request: Request, authorization: str | None = Header(default=None)):
+    """Readiness (needs the database), distinct from the public liveness check /api/v1/health. Secret-protected so anonymous callers cannot probe
+    or load the database; a database failure is the standard 503 from the StoreUnavailable handler (no detail leaked)."""
+    _require_cron_secret(request, authorization)
+    st = state(request)
+    st.store.ready()
+    return {"ready": True, "store": st.settings.store}

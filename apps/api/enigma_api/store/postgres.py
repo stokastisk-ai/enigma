@@ -247,6 +247,9 @@ class PostgresStore(Store):
     def get_run(self, run_id):
         return self._one("select * from inference_runs where id = %s::uuid", (run_id,))
 
+    def ready(self):
+        self._run("select 1")                                       # opens/validates the connection; raises StoreUnavailable (SQLSTATE only) on failure
+
     def prune(self, event_hours=48, gpu_days=14, vllm_days=14):
         return self._fn("enigma_prune", "%s,%s,%s", (int(event_hours), int(gpu_days), int(vllm_days)))
 

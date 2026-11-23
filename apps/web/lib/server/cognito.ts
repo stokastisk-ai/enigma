@@ -11,6 +11,23 @@ export type CognitoConfig = { region: string; poolId: string; clientId: string; 
 
 export const COOKIE_ACCESS = "enigma_at";
 export const COOKIE_REFRESH = "enigma_rt";
+/** The refresh token is deliberately path-scoped to the BFF: it is never sent with page, asset or RSC requests. */
+export const REFRESH_COOKIE_PATH = "/api";
+
+/** Cookie attributes for the Cognito tokens: httpOnly (no JS access), SameSite=Lax, Secure outside local http. */
+export function authCookieOptions(maxAgeS: number, path = "/", nodeEnv: string | undefined = process.env.NODE_ENV) {
+  return { httpOnly: true, sameSite: "lax" as const, secure: nodeEnv === "production", path, maxAge: maxAgeS };
+}
+
+/**
+ * Page requests cannot carry the /api-scoped refresh cookie, so an expired access token on a page is bounced through GET /api/auth/refresh
+ * (the one place the refresh cookie IS sent), which renews the session and returns to the page. Only console pages qualify; the target is a strict
+ * allow-list (no query, no dots, no backslash, no double slash), so this can never become an open redirect.
+ */
+const PAGE_RE = /^\/(?:app|onboarding)(?:\/[A-Za-z0-9_-]+)*$/;
+export const isRefreshablePage = (pathname: string) => pathname.length <= 200 && PAGE_RE.test(pathname);
+export const safeNextPath = (raw: string | null | undefined): string => (raw && isRefreshablePage(raw) ? raw : "/app");
+export const pageRefreshUrl = (pathname: string): string | null => (isRefreshablePage(pathname) ? `/api/auth/refresh?next=${encodeURIComponent(pathname)}` : null);
 
 export function cognitoConfig(env: Record<string, string | undefined> = process.env): CognitoConfig | null {
   const region = env.NEXT_PUBLIC_COGNITO_REGION || env.COGNITO_REGION || "";

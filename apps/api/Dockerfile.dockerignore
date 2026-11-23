@@ -1,0 +1,7 @@
+# Deny by default so secrets, caches and local state can never enter the build context; allow only what the API image copies.
+*
+!apps/api/requirements.txt
+!apps/api/requirements-railway.txt
+!apps/api/enigma_api/
+**/__pycache__
+**/*.pyc

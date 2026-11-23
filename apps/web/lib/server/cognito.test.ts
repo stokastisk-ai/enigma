@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import {
-  _clearJwksCache, CognitoError, cognitoConfig, confirmSignUp, issuerOf, publicError, refresh, sameOrigin, signIn, signUp, verifyAccessToken, type CognitoConfig,
+  REFRESH_COOKIE_PATH, _clearJwksCache, authCookieOptions, isRefreshablePage, pageRefreshUrl, safeNextPath, CognitoError, cognitoConfig, confirmSignUp, issuerOf, publicError, refresh, sameOrigin, signIn, signUp, verifyAccessToken, type CognitoConfig,
 } from "./cognito.ts";
 
 const env = { NEXT_PUBLIC_COGNITO_REGION: "us-east-1", NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_TESTPOOL", NEXT_PUBLIC_COGNITO_CLIENT_ID: "testclientid123" };
@@ -105,4 +105,30 @@ test("sameOrigin (CSRF): requires an Origin equal to the host", () => {
   assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", "d111.cloudfront.net"), true);
   assert.equal(sameOrigin("https://evil.example", "abc.lambda-url.us-east-1.on.aws", "d111.cloudfront.net"), false);
   assert.equal(sameOrigin("https://d111.cloudfront.net", "abc.lambda-url.us-east-1.on.aws", undefined), false);
+});
+
+// ---- session cookies and the page-refresh redirect (2026-11-23)
+test("auth cookies: httpOnly + SameSite=Lax always; Secure in production; the refresh token stays scoped to /api", () => {
+  for (const [env, secure] of [["production", true], ["development", false], [undefined, false]] as const) {
+    const at = authCookieOptions(3600, "/", env);
+    const rt = authCookieOptions(30 * 24 * 3600, REFRESH_COOKIE_PATH, env);
+    for (const c of [at, rt]) assert.deepEqual([c.httpOnly, c.sameSite, c.secure], [true, "lax", secure]);
+    assert.equal(at.path, "/");
+    assert.equal(rt.path, "/api");
+  }
+});
+
+test("page refresh target is a strict allow-list: console paths only, never off-site", () => {
+  for (const ok of ["/app", "/app/gpus", "/app/settings/api-keys", "/app/admin/aws", "/onboarding"]) {
+    assert.equal(isRefreshablePage(ok), true, ok);
+    assert.equal(safeNextPath(ok), ok);
+    assert.equal(pageRefreshUrl(ok), `/api/auth/refresh?next=${encodeURIComponent(ok)}`);
+  }
+  for (const bad of ["//evil.example/x", "https://evil.example", "/\\evil.example", "/app/../../etc", "/app/%2e%2e/x", "/app%2f..%2f", "/api/auth/sign-out", "/sign-in", "/", "javascript:alert(1)", "/app?x=1", "/app#x", "/app/a b", "/app//x", "/app/", "/appx", "/application", "", "/app/" + "a".repeat(250)]) {
+    assert.equal(isRefreshablePage(bad), false, JSON.stringify(bad));
+    assert.equal(safeNextPath(bad), "/app", JSON.stringify(bad));
+    assert.equal(pageRefreshUrl(bad), null, JSON.stringify(bad));
+  }
+  assert.equal(safeNextPath(null), "/app");
+  assert.equal(safeNextPath(undefined), "/app");
 });

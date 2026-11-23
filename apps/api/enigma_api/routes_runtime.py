@@ -34,7 +34,7 @@ def _own(ident: RuntimeIdentity, runtime_id: str) -> None:
 
 def _limit(st: AppState, name: str, key: str, rate: float, burst: int) -> None:
     from .ratelimit import RateLimiter
-    st.limiters.setdefault(name, RateLimiter(rate, burst)).check(key)
+    st.limiters.setdefault(name, RateLimiter(rate, burst, clock=st.monotonic)).check(key)
 
 
 @router.post("/runtimes/register", response_model=RegisterResponse)

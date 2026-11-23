@@ -866,6 +866,9 @@ class DynamoStore(Store):
         return self._window("VLLM", project_id, runtime_id, since, until, limit)
 
     # ------------------------------------------------------------------ housekeeping
+    def ready(self):
+        self._call("get_item", TableName=self.table, Key=_key("READY#probe", "READY"), ConsistentRead=False)     # a read of an absent key: needs only dynamodb:GetItem
+
     def prune(self, event_hours=48, gpu_days=14, vllm_days=14):
         """Bounded scan that deletes aged rows. DynamoDB TTL does the same lazily (~48 h); this gives exact-age deletion when called.
         Events are removed only for TERMINAL jobs. The scan is capped at ``scan_page_cap`` pages per call, so a very large backlog drains over several calls."""

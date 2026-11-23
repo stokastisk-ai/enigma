@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { COOKIE_REFRESH, cognitoConfig, confirmSignUp, publicError, revoke, sameOrigin, signIn, signUp } from "@/lib/server/cognito";
+import { COOKIE_REFRESH, cognitoConfig, confirmSignUp, publicError, refresh, revoke, safeNextPath, sameOrigin, signIn, signUp, verifyAccessToken } from "@/lib/server/cognito";
 import { cognitoSelected } from "@/lib/server/env";
 import { clearAuthCookies, setAuthCookies } from "@/lib/server/session";
 import { cookies } from "next/headers";
@@ -62,5 +62,33 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   } catch (e) {
     const p = publicError(e);
     return json(p.status, { error: { code: p.code, message: p.message }, needsConfirm: p.needsConfirm ?? false });
+  }
+}
+
+/**
+ * GET /api/auth/refresh?next=/app/... : session renewal for PAGE navigations. The refresh cookie is Path=/api, so this is the only place a browser sends it
+ * on a navigation. It reads the refresh cookie, obtains a new access token, verifies it, re-sets the cookies and redirects to an allow-listed console path
+ * (anything else becomes /app). Any failure clears both cookies and ends at /sign-in, so it cannot loop. It never returns a token and changes only the
+ * caller's own session, so a cross-site navigation to it can at most renew that user's own cookies.
+ */
+export async function GET(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
+  const { action } = await ctx.params;
+  const cfg = cognitoConfig();
+  if (action !== "refresh" || !cognitoSelected() || !cfg) return json(404, { error: { code: "not_found", message: "not found" } });
+  const go = (path: string) => {
+    const r = NextResponse.redirect(new URL(path, process.env.ENIGMA_PUBLIC_ORIGIN || req.url));
+    r.headers.set("cache-control", "no-store");
+    return r;
+  };
+  const rt = (await cookies()).get(COOKIE_REFRESH)?.value;
+  if (!rt) return go("/sign-in");
+  try {
+    const t = await refresh(cfg, rt);
+    if (!(await verifyAccessToken(t.accessToken, cfg))) throw new Error("unverifiable access token");
+    await setAuthCookies(t);
+    return go(safeNextPath(req.nextUrl.searchParams.get("next")));
+  } catch {
+    await clearAuthCookies();
+    return go("/sign-in");
   }
 }

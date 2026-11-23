@@ -103,5 +103,10 @@ class Store(ABC):
     def get_run(self, run_id: str) -> Row | None: ...
     @abstractmethod
     def prune(self, event_hours: int = 48, gpu_days: int = 14, vllm_days: int = 14) -> Row: ...
+
+    def ready(self) -> None:
+        """Readiness probe: raise StoreUnavailable if the backing database cannot serve a trivial read. In-memory/legacy stores have nothing to check."""
+        return None
+
     @abstractmethod
     def audit(self, workspace_id: str | None, actor: str, action: str, target_type: str | None = None, target_id: str | None = None, meta: Row | None = None) -> None: ...

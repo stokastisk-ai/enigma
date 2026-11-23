@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -26,6 +27,7 @@ class AppState:
     limiters: dict[str, RateLimiter] = field(default_factory=dict)
     ops: Any = None                                   # awsops.OpsService (admin-only AWS visibility); None until create_app builds it
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    monotonic: Callable[[], float] = time.monotonic   # rate-limiter time source; tests inject a manual clock, production keeps the real one
 
 
 def state(request: Request) -> AppState:

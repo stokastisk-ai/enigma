@@ -723,3 +723,7 @@ def test_batch_read_never_returns_a_silently_truncated_result(ddb, clock):
     stuck = DynamoStore(TABLE, client=NeverFinishes(ddb), clock=clock)
     with pytest.raises(StoreUnavailable, match="incomplete"):
         stuck.list_projects(w)
+
+
+def test_ready_probe_needs_only_getitem_and_works_on_an_empty_table(store):
+    store.ready()                                              # absent key read: must not raise and must not create anything

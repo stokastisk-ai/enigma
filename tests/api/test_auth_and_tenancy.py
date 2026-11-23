@@ -200,11 +200,49 @@ def test_body_size_cap_declared_and_streamed(client, alice):
     assert r.status_code == 413
 
 
+class _ManualMonotonic:
+    """Deterministic stand-in for time.monotonic: the limiter only moves when the test says so (no wall-clock dependence, no flake under load)."""
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def _claim(client, who):
+    return client.post("/api/v1/jobs/claim", json={}, headers=who.rh)
+
+
 def test_rate_limit_returns_429_with_retry_after(client, alice):
-    codes = [client.post("/api/v1/jobs/claim", json={}, headers=alice.rh).status_code for _ in range(14)]
-    assert 429 in codes and codes[0] == 200
-    r = client.post("/api/v1/jobs/claim", json={}, headers=alice.rh)
-    assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1
+    """Production limits for /jobs/claim: 5 tokens/s, burst 10. Time is frozen, so exactly 10 requests pass and the 11th is refused."""
+    client.app.state.enigma.monotonic = _ManualMonotonic()
+    codes = [_claim(client, alice).status_code for _ in range(10)]
+    assert codes == [200] * 10
+    r = _claim(client, alice)
+    assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
+    assert r.headers["retry-after"] == "1"                                  # (1 - 0 tokens) / 5 per s = 0.2 s -> rounded up to the 1 s minimum
+
+
+def test_rate_limit_refills_at_five_per_second_and_caps_at_burst(client, alice):
+    clk = _ManualMonotonic()
+    client.app.state.enigma.monotonic = clk
+    assert [_claim(client, alice).status_code for _ in range(10)] == [200] * 10 and _claim(client, alice).status_code == 429
+    clk.t += 0.19                                                           # 0.95 token: still refused
+    assert _claim(client, alice).status_code == 429
+    clk.t += 0.01                                                           # exactly one token has accrued
+    assert _claim(client, alice).status_code == 200 and _claim(client, alice).status_code == 429
+    clk.t += 1.0                                                            # five tokens
+    assert [_claim(client, alice).status_code for _ in range(6)] == [200] * 5 + [429]
+    clk.t += 3600                                                           # a long idle period never banks more than the burst
+    assert [_claim(client, alice).status_code for _ in range(11)] == [200] * 10 + [429]
+
+
+def test_rate_limit_is_per_runtime_not_global(client, alice, bob):
+    client.app.state.enigma.monotonic = _ManualMonotonic()
+    for _ in range(10):
+        assert _claim(client, alice).status_code == 200
+    assert _claim(client, alice).status_code == 429
+    assert _claim(client, bob).status_code == 200                           # another tenant's runtime has its own bucket
 
 
 def test_prune_requires_cron_secret(client):

@@ -1,0 +1,14 @@
+*
+!apps/web/
+!packages/contracts/
+apps/web/node_modules
+apps/web/.next*
+apps/web/.amplify-hosting
+apps/web/test-results
+apps/web/playwright-report
+apps/web/.env*
+apps/web/*.backup-*
+apps/web/e2e
+apps/web/e2e-live
+apps/web/tsconfig.tsbuildinfo
+**/.env*

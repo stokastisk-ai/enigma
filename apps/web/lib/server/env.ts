@@ -1,4 +1,5 @@
 import { cognitoConfig } from "./cognito";
+import { devAuthEnabled } from "./hosted-env";
 
 /** Server-only configuration. Nothing here is exposed to the browser (no NEXT_PUBLIC_ prefix). */
 
@@ -12,13 +13,7 @@ export const clerkConfigured = () =>
 /** True when a real identity provider (Cognito or Clerk) is configured. */
 export const realAuthConfigured = () => cognitoSelected() || clerkConfigured();
 
-/** Dev auth exists only for local mock E2E. It can never be enabled on Vercel/AWS-hosted production or when a real provider is configured. */
-export const devAuthAllowed = () =>
-  process.env.ENIGMA_DEV_AUTH === "1" &&
-  !process.env.VERCEL &&
-  !process.env.VERCEL_ENV &&
-  !process.env.AWS_EXECUTION_ENV &&
-  !process.env.AWS_LAMBDA_FUNCTION_NAME &&
-  (process.env.ENIGMA_DEV_JWT_SECRET ?? "").length >= 32;
+/** Dev auth exists only for local mock E2E. It can never be enabled on Vercel/AWS/Railway-hosted production or when a real provider is configured. */
+export const devAuthAllowed = () => devAuthEnabled();
 
 export const apiBase = () => (process.env.ENIGMA_API_URL ?? process.env.ENIGMA_API_BASE_URL ?? "").replace(/\/$/, "");

@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { cookies } from "next/headers";
 import { clerkConfigured, cognitoSelected, devAuthAllowed } from "./env";
-import { COOKIE_ACCESS, COOKIE_REFRESH, cognitoConfig, refresh, verifyAccessToken, type Tokens } from "./cognito";
+import { COOKIE_ACCESS, COOKIE_REFRESH, REFRESH_COOKIE_PATH, authCookieOptions, cognitoConfig, refresh, verifyAccessToken, type Tokens } from "./cognito";
 
 export type Session = { userId: string; token: string; mode: "clerk" | "cognito" | "dev" };
 
@@ -15,21 +15,16 @@ export function mintDevToken(sub: string, secret: string): string {
   return `${head}.${body}.${sig}`;
 }
 
-/** Cookie attributes for the Cognito tokens: httpOnly (no JS access), SameSite=Lax, Secure outside local http. */
-export function authCookieOptions(maxAgeS: number, path = "/") {
-  return { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path, maxAge: maxAgeS };
-}
-
 export async function setAuthCookies(t: Tokens) {
   const jar = await cookies();
   jar.set(COOKIE_ACCESS, t.accessToken, authCookieOptions(Math.max(60, t.expiresIn)));
-  if (t.refreshToken) jar.set(COOKIE_REFRESH, t.refreshToken, authCookieOptions(30 * 24 * 3600, "/api"));
+  if (t.refreshToken) jar.set(COOKIE_REFRESH, t.refreshToken, authCookieOptions(30 * 24 * 3600, REFRESH_COOKIE_PATH));
 }
 
 export async function clearAuthCookies() {
   const jar = await cookies();
   jar.set(COOKIE_ACCESS, "", authCookieOptions(0));
-  jar.set(COOKIE_REFRESH, "", authCookieOptions(0, "/api"));
+  jar.set(COOKIE_REFRESH, "", authCookieOptions(0, REFRESH_COOKIE_PATH));
 }
 
 async function cognitoSession(): Promise<Session | null> {
