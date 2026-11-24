@@ -2,7 +2,7 @@
 
 STATUS: implemented and tested against moto (an in-process emulator) only. NOT deployed; no AWS call is made by the tests. The PostgreSQL
 store (store/postgres.py) remains the reference implementation and is untouched until this one passes the same behavioural suite on a
-real table. See docs/AWS_COST_MATRIX.md section 6 for the parity gate and the known differences listed at the bottom of this docstring.
+real table. See docs/AWS_DYNAMODB_REAL_PARITY.md for the parity gate and the known differences listed at the bottom of this docstring.
 
 Key design (PK / SK are strings)
   canonical rows   PK=<TYPE>#<id>            SK="#"                      WS, PRJ, RT, CRED, CONV, JOB, RUN, SLUG#<slug>, CREDPFX#<prefix>, IDEM#<ws>#<key>

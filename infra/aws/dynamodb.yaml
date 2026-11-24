@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Enigma Track B data store (DynamoDB) — REVIEW DRAFT. NOT DEPLOYED. Creating this stack is a billable action and needs the owner's explicit
-  itemized approval (docs/AWS_DEPLOYMENT.md). CPU-less, GPU-less: this is only the control-plane database; all inference runs on the user's
+  itemized approval (docs/AWS_DYNAMODB_REAL_PARITY.md). CPU-less, GPU-less: this is only the control-plane database; all inference runs on the user's
   Kaggle 2x T4 session. No GSI by design (the store uses strongly consistent reads only).
 Parameters:
   Environment: { Type: String, Default: dev, AllowedValues: [dev] }
@@ -38,7 +38,7 @@ Resources:
   ApiAccessPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Least-privilege data-plane access for the Enigma API Lambda (one table, no schema operations, audit rows append-only).
+      Description: Least-privilege data-plane access for the Enigma API (one table, no schema operations, audit rows append-only).
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

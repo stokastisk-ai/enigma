@@ -7,7 +7,7 @@ export type Session = { userId: string; token: string; mode: "clerk" | "cognito"
 
 const b64 = (o: unknown) => Buffer.from(typeof o === "string" ? o : JSON.stringify(o)).toString("base64url");
 
-/** HS256 token for the local FastAPI in dev mode only (the API rejects HS256 unless ENIGMA_DEV_AUTH is on and not on Vercel/prod). */
+/** HS256 token for the local FastAPI in dev mode only (the API rejects HS256 unless ENIGMA_DEV_AUTH is on and not on a hosted platform/prod). */
 export function mintDevToken(sub: string, secret: string): string {
   const head = b64({ alg: "HS256", typ: "JWT" });
   const body = b64({ sub, aud: "enigma-dev", exp: Math.floor(Date.now() / 1000) + 300 });

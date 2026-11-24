@@ -26,7 +26,7 @@ Read-only evidence from the non-root IAM Identity Center profile `enigma-deploye
 
 No expiry date is estimated or derived.
 
-## Cost projections (Kaggle-only, list price vs documented free allowances; `scripts/aws_session_cost.py`)
+## Cost projections (Kaggle-only, list price vs documented free allowances; `scripts/aws_session_cost.py (removed 2026-11-24)`)
 List price is the model estimate; "with free tiers" assumes always-free allowances apply (unverified here). Credits and actual billed charges are separate: actual billed charge to date is $0.00.
 | Scenario | LIST | Free tiers |
 |---|---:|---:|

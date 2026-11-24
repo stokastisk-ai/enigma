@@ -1,7 +1,7 @@
 """Cognito JWT verification (unit/integration with LOCALLY generated RSA keys).
 
 This proves claim handling and tenant isolation in our code. It is NOT evidence about a real Cognito user pool
-(JWKS fetch, token issuance, sign-up flows) -- that stays BLOCKED until a pool exists (docs/AWS_MIGRATION_REPORT.md).
+(JWKS fetch, token issuance, sign-up flows) -- that is covered by the live Railway E2E (a real pool, enigma-prod, exists since 2026-11-24).
 """
 from __future__ import annotations
 

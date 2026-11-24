@@ -10,10 +10,9 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-e2e/**",          // build output of the mock E2E suite
-    ".next-*/**",            // any other generated build dir (standalone/Lambda package validation, local experiments)
+    ".next-*/**",            // any other generated build dir (e.g. the standalone build and local experiments)
     "test-results/**",
     "playwright-report/**",
-    ".amplify-hosting/**",   // generated Amplify deployment bundle (scripts/build_amplify_bundle.py); contains compiled third-party code
     "out/**",
     "build/**",
     "next-env.d.ts",

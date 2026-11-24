@@ -12,10 +12,9 @@ const nextConfig: NextConfig = {
   // The mock E2E suite builds into its own directory with Clerk disabled, so it never shares a build with the real-auth configuration.
   distDir: process.env.ENIGMA_DIST_DIR || ".next",
   poweredByHeader: false,
-  // Opt-in self-contained Node server bundle (.next-standalone/standalone/server.js) for a Lambda Web Adapter / container-less host.
-  // Used only to validate the AWS alternative while Amplify Hosting does not document Next.js 16; the default build is unchanged.
-  // images.unoptimized: Enigma uses no next/image, and without it Next does not bundle the native `sharp` (x86_64-only) binary, so the package is
-  // pure JavaScript and runs on either Lambda architecture. Re-enable optimisation (and pick the architecture deliberately) if next/image is ever added.
+  // Self-contained Node server bundle (.next/standalone/server.js) used by apps/web/Dockerfile on Railway (ENIGMA_STANDALONE=1); the default build is unchanged.
+  // images.unoptimized: Enigma uses no next/image, and without it Next does not bundle the native `sharp` binary, so the image stays pure JavaScript.
+  // Re-enable optimisation deliberately if next/image is ever added.
   ...(process.env.ENIGMA_STANDALONE === "1" ? { output: "standalone" as const, images: { unoptimized: true }, outputFileTracingExcludes: { "*": ["node_modules/sharp/**", "node_modules/@img/**"] } } : {}),
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

@@ -13,6 +13,6 @@
 | Privacy | prompts are stored (chat history) but never logged; validation errors omit values; failure messages from vLLM are not forwarded |
 | Audit | append-only `audit_events` (UPDATE/DELETE revoked even for service role) for workspace, runtime, credential and cancel actions |
 
-Dev auth (HS256) is accepted only when `ENIGMA_DEV_AUTH` is on, never on Vercel or `ENIGMA_ENV=production`, and the UI shows a banner. Algorithm confusion is blocked (`alg=none`, HS256-with-public-key rejected).
+Dev auth (HS256) is accepted only when `ENIGMA_DEV_AUTH` is on, never on Railway or with `ENIGMA_ENV=production`, and the UI shows a banner. Algorithm confusion is blocked (`alg=none`, HS256-with-public-key rejected).
 
 Known gaps: rate limits are per warm instance; credential `last_used_at` is updated per request; RLS/Realtime/Clerk JWKS have not been exercised against live services (see TEST_REPORT).

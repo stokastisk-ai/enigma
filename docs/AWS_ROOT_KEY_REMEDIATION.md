@@ -6,7 +6,7 @@
 - The configured CLI profile `default` authenticates as the account **root user** (`arn:aws:iam::<acct>:root`).
 - `iam get-account-summary` reports **root access keys present** and **MFA enabled** on the root user.
 - The second profile, `vllm-temp`, has **no credentials and no region** configured, so there is **no non-root path** today.
-- Consequence (skills.md §16.3): no deployment, automation or chargeable operation may use root. Per policy, read-only AWS calls that need root were **stopped** this session after the identity check; the facts in `AWS_COST_MATRIX.md` come from earlier read-only calls.
+- Consequence (skills.md §16.3): no deployment, automation or chargeable operation may use root. Per policy, read-only AWS calls that need root were **stopped** this session after the identity check; the facts in `AWS_COST_MATRIX.md (removed 2026-11-24)` come from earlier read-only calls.
 
 ## 2. Why root keys are a problem
 Root has unlimited power (including closing the account and changing billing). A leaked root access key cannot be restricted by IAM policy. Long-lived keys on a laptop disk are the most common way accounts are lost. AWS guidance is to have **no** root access keys and to use IAM Identity Center (or IAM roles) with short-lived credentials.
@@ -60,4 +60,4 @@ Notes: `rds:Create*` and `ec2:RunInstances` stay **denied** because Track A (RDS
 
 ## 6. What this plan does not do
 - It does not create the IAM Identity Center instance, users, permission sets or profile; it does not delete or deactivate any key; it does not enable any budget; it does not verify the credit expiry date (Billing → Credits, console only).
-- It does not make deployment free. See `AWS_COST_MATRIX.md` and `AWS_DEPLOYMENT.md` for the itemised charges and the approval gate.
+- It does not make deployment free. See `AWS_COST_MATRIX.md (removed 2026-11-24)` and `AWS_DEPLOYMENT.md (removed 2026-11-24)` for the itemised charges and the approval gate.

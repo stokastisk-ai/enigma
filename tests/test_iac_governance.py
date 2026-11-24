@@ -1,4 +1,4 @@
-"""Governance of the unapplied IaC/policy artifacts: nothing is approved, nothing GPU, least privilege, and the policies match what the code really calls."""
+"""Governance of the remaining AWS policy/IaC artifacts (IAM policies, DynamoDB templates, dormant AWS Ops page inputs): nothing GPU, least privilege, and the policies match what the code really calls."""
 from __future__ import annotations
 
 import fnmatch
@@ -16,7 +16,6 @@ from enigma_api.awsops import Manifest  # noqa: E402
 
 DEPLOYER = json.loads((ROOT / "infra/aws/iam/enigma-deployer-policy.json").read_text())
 READER = json.loads((ROOT / "infra/aws/iam/enigma-api-ops-reader-policy.json").read_text())
-MANIFEST = yaml.safe_load((ROOT / "infra/aws/resource-manifest.yaml").read_text())
 
 # IAM action for every boto3 call awsops.py makes (tests/api/test_awsops.py proves nothing else is ever called)
 READER_ACTIONS = {"lambda:GetFunctionConfiguration", "dynamodb:DescribeTable", "dynamodb:DescribeTimeToLive", "cloudfront:GetDistribution", "cognito-idp:DescribeUserPool", "cloudwatch:GetMetricData"}
@@ -85,39 +84,17 @@ def test_ops_reader_policy_actions_match_the_calls_in_the_source():
     assert not re.search(r"\.(put_|create_|update_|delete_|tag_|list_account|get_cost|get_dimension)\w*\(", src)
 
 
-def test_resource_manifest_is_unapproved_and_blocks_every_chargeable_action():
-    a = MANIFEST["approval"]
-    assert a["approved"] is False and a["region"] is None and a["identity"] is None and a["dollar_ceiling_usd_per_month"] is None
-    assert a["credit_expiry_checked_in_billing_console"] is None and a["free_tier_eligibility_checked"] is None
-    assert a["budget_notification_only_not_a_cap"] is True
-    assert MANIFEST["compute_boundary"]["aws_gpu"] == "forbidden" and "Kaggle" in MANIFEST["compute_boundary"]["inference_location"]
-
-
-def test_resource_manifest_contains_only_control_plane_types_and_a_complete_teardown_order():
-    ids = [r["id"] for r in MANIFEST["resources"]]
-    assert len(ids) == len(set(ids))
-    for r in MANIFEST["resources"]:
-        assert not re.match(r"AWS::(EC2::Instance|EC2::NatGateway|SageMaker|Bedrock|ECS|EKS|Batch|RDS|ElasticLoadBalancing|Route53|SecretsManager)", r["type"]), r
-    assert set(MANIFEST["teardown_order"]) == set(ids)
-    assert MANIFEST["teardown_order"].index("dynamodb_parity_table") < MANIFEST["teardown_order"].index("dynamodb_table")        # throwaway table goes first
-    assert MANIFEST["teardown_order"][-1] == "iam_roles" and MANIFEST["teardown_order"][0] == "cloudwatch_dashboard"
-    assert next(r for r in MANIFEST["resources"] if r["id"] == "dynamodb_table")["gsi"] == 0
-    assert next(r for r in MANIFEST["resources"] if r["id"] == "log_groups")["retention_days"] == 7
-    assert next(r for r in MANIFEST["resources"] if r["id"] == "cloudwatch_dashboard")["metrics"] == 30
-
-
 def test_example_ops_manifest_parses_with_the_strict_parser():
     m = Manifest.parse((ROOT / "infra/aws/manifest.example.json").read_text())
     assert m.ddb_table == "enigma-dev" and m.region == "us-east-1"
 
 
-def test_dashboard_resource_matches_the_real_draft_file():
+def test_ops_dashboard_file_is_valid_and_stays_within_the_free_metric_allowance():
     d = json.loads((ROOT / "infra/aws/dashboards/enigma-control-plane.json").read_text())
     n = sum(len(w["properties"]["metrics"]) for w in d["widgets"] if w["type"] == "metric")
-    assert n == next(r for r in MANIFEST["resources"] if r["id"] == "cloudwatch_dashboard")["metrics"]
+    assert 0 < n <= 50
 
 
-# ---- web tier draft (Path A) ----
 class _CfnLoader(yaml.SafeLoader):
     pass
 
@@ -125,57 +102,23 @@ class _CfnLoader(yaml.SafeLoader):
 _CfnLoader.add_multi_constructor("!", lambda loader, suffix, node: None)
 
 
-def _web_template():
-    return yaml.load((ROOT / "infra/aws/web-template.yaml").read_text(), Loader=_CfnLoader)
-
-
-def test_web_template_is_cpu_only_minimal_and_bounded():
-    t = _web_template()
-    types = {r["Type"] for r in t["Resources"].values()}
-    assert types == {"AWS::Logs::LogGroup", "AWS::IAM::Role", "AWS::Lambda::Function", "AWS::Lambda::Url", "AWS::Lambda::Permission"}
-    assert not any(re.match(p.replace("*", ".*"), ty) for ty in types for p in ("AWS::EC2::.*", "AWS::SageMaker::.*", "AWS::Bedrock::.*", "AWS::ECS::.*", "AWS::EKS::.*", "AWS::CloudFront::.*"))
-    fn = t["Resources"]["WebFunction"]["Properties"]
-    assert fn["Timeout"] <= 30 and fn["Runtime"].startswith("nodejs")
-    assert t["Resources"]["WebLogs"]["Properties"]["RetentionInDays"] == 7
-
-
-def test_web_template_holds_no_secret_or_pinned_account_value():
-    text = (ROOT / "infra/aws/web-template.yaml").read_text()
-    assert not re.search(r"\b\d{12}\b", text.replace("[0-9]{12}", "")), "no account id in IaC"
-    env = _web_template()["Resources"]["WebFunction"]["Properties"]["Environment"]["Variables"]
-    assert not [k for k in env if re.search(r"SECRET|PASSWORD|PRIVATE|SERVICE_ROLE|AWS_ACCESS", k)]
-
-
-def test_web_role_is_logs_only():
-    stmts = _web_template()["Resources"]["WebRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
-    assert [s["Action"] for s in stmts] == [["logs:CreateLogStream", "logs:PutLogEvents"]]
-
-
-# ---- cost surface of every CloudFormation template (session-based, pay-per-use only) ----
 def _all_templates():
     return sorted(p for p in (ROOT / "infra/aws").glob("*.yaml") if "AWSTemplateFormatVersion" in p.read_text())
 
 
-def test_no_template_creates_always_billed_or_metered_extras():
-    """No provisioned concurrency, WAF, CloudFront, alarms, metric filters/EMF, canaries, NAT/ALB/EC2/RDS: nothing that bills while Kaggle is offline."""
-    banned = re.compile(r"ProvisionedConcurrency|AWS::WAF|AWS::CloudFront::|AWS::CloudWatch::(Alarm|CompositeAlarm|InsightRule|AnomalyDetector)|AWS::Logs::MetricFilter|"
+def test_only_the_dynamodb_templates_remain_and_none_creates_billed_extras():
+    """Hosting templates (Lambda/Amplify/CloudFront) were retired with the move to Railway; what is left must stay minimal and cheap."""
+    names = {p.name for p in _all_templates()}
+    assert names == {"dynamodb.yaml", "dynamodb-parity.yaml"}, names
+    banned = re.compile(r"ProvisionedConcurrency|AWS::WAF|AWS::CloudFront::|AWS::Lambda::|AWS::CloudWatch::(Alarm|CompositeAlarm|InsightRule|AnomalyDetector)|AWS::Logs::MetricFilter|"
                         r"AWS::Synthetics|AWS::EC2::|AWS::RDS::|AWS::ElasticLoadBalancing|AWS::Events::Rule|AWS::Scheduler|AWS::SecretsManager|AWS::KMS::Key|"
                         r"AWS::ApplicationAutoScaling|AWS::StepFunctions|AWS::SQS|AWS::Kinesis|AWS::Route53|AWS::XRay|TracingConfig")
-    assert _all_templates()
     for p in _all_templates():
         hits = banned.findall(p.read_text())
         assert not hits, f"{p.name}: {hits}"
 
 
-def test_reserved_concurrency_is_optional_and_off_by_default():
-    """This account's Lambda limit is 10 and 10 must stay unreserved, so a reservation fails the deploy; the parameter defaults to 0 (omitted)."""
-    for name in ("template.yaml", "web-template.yaml"):
-        t = yaml.load((ROOT / "infra/aws" / name).read_text(), Loader=_CfnLoader)
-        p = t["Parameters"]["ReservedConcurrency"]
-        assert p["Default"] == 0 and p["MaxValue"] <= 5
-
-
-def test_log_groups_have_short_retention_and_dynamodb_defaults_to_on_demand_without_pitr():
+def test_dynamodb_defaults_to_on_demand_without_pitr_and_log_groups_are_short_lived():
     for p in _all_templates():
         t = yaml.load(p.read_text(), Loader=_CfnLoader)
         for r in t["Resources"].values():

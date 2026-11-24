@@ -15,8 +15,6 @@ node_modules/
 out/
 next-env.d.ts
 *.tsbuildinfo
-# vercel
-.vercel/
 # artifacts that must never enter git
 *.whl
 *.zip
@@ -40,4 +38,3 @@ test-results/
 
 # private AWS discovery metadata
 /.enigma-local/
-/apps/web/.amplify-hosting/

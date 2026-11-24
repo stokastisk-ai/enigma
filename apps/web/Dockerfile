@@ -7,6 +7,8 @@ COPY apps/web/package.json apps/web/package-lock.json apps/web/
 RUN cd apps/web && npm ci --no-audit --no-fund
 COPY apps/web apps/web
 COPY packages/contracts packages/contracts
+# The app currently ships no static assets, and Git does not track an empty apps/web/public: create it so the runtime stage's COPY works either way.
+RUN mkdir -p apps/web/public
 # Public identifiers only. Railway does NOT pass service variables as build args automatically; declare each one deliberately.
 # Only needed if Clerk (not Cognito) is selected; the Cognito identifiers are read at RUNTIME and need no build arg.
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""

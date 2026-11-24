@@ -1,14 +1,14 @@
 # Architecture
 
 ```
-Browser ──Clerk session──> Next.js (Vercel)
+Browser ──Cognito session cookies──> Next.js (Railway)
    │  /api/enigma/*  = BFF: verifies session, allow-lists method+path, zod-validates bodies, adds bearer
    │  Realtime (optional) <── private channel conv:<id> (RLS on realtime.messages)
    v
-FastAPI (Vercel Python Functions, user plane /api/v1/app/*, runtime plane /api/v1/*)
-   │  service-role, server only
+FastAPI (Railway container, user plane /api/v1/app/*, runtime plane /api/v1/*)
+   │  private network, least-privilege database role, TLS
    v
-Supabase Postgres  (jobs, events, messages, telemetry; atomic SQL functions; RLS)
+Railway PostgreSQL  (jobs, events, messages, telemetry; atomic SQL functions)
    ^
    │  outbound HTTPS: claim / events / complete / telemetry / heartbeat
 GPU host (Kaggle notebook): enigma_connector ── localhost ──> stokastisk ServerProcess (vLLM) + NVML

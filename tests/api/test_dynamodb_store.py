@@ -2,7 +2,7 @@
 
 Safety: every test runs with FAKE credentials, no profile/config files and ``mock_aws`` active (asserted), so even a mocking failure could not
 reach a real account. Results are emulator evidence only: moto is not a faithful model of DynamoDB throttling, partition limits or real
-concurrency, so this does NOT prove production behaviour. See docs/AWS_COST_MATRIX.md section 6.
+concurrency, so this does NOT prove production behaviour. See docs/AWS_DYNAMODB_REAL_PARITY.md.
 
 1. The existing store-agnostic API suite (jobs, leases, tenancy, telemetry, route guards) is re-run against DynamoStore with the same fake
    clock as the in-memory store, so lease expiry / deadlines / staleness are exercised too.

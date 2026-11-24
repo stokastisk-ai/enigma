@@ -1,5 +1,7 @@
 # AWS security notes
 
+> **Status 2026-11-24:** Enigma is hosted on Railway. Lambda, Function URL, CloudFront and Amplify items below describe the retired AWS hosting design and are kept only as security reasoning; the Cognito, CSRF, cookie and JWKS items still apply to the Railway deployment.
+
 ## Implemented and tested locally
 - **JWT verification (API)**: RS256 only; HS256 only in explicit dev mode (refused in production/AWS); `alg:none` refused; issuer pinned to the user pool; `token_use` and app-client (`client_id`/`aud`) must match; `exp`/`iat`/`sub` required. 16 tests, locally generated keys (`tests/api/test_cognito_auth.py`).
 - **JWT verification (web)** with `node:crypto`; JWKS cached 1 h with one forced refresh on unknown `kid`. 15 tests (`npm run test:unit`).
@@ -24,7 +26,7 @@
 - **Root credentials:** the CLI profile authenticates as the account **root user**, and root **access keys exist** (MFA is enabled). Root keys should be deleted and a least-privilege identity used for all deployment work. Nothing was changed (no IAM modifications were authorised).
 - **Pinned JWKS (`COGNITO_JWKS_JSON`)** lets a VPC-attached Lambda verify Cognito tokens with no outbound network. Fail-closed on unknown `kid`; malformed JSON refuses to start. Risk: key rotation requires a config update. Tests: `tests/api/test_cognito_auth.py`.
 - **CloudFront → Function URL:** the origin sees the Function URL's `Host`, so the CSRF same-origin check accepts only the configured `ENIGMA_PUBLIC_HOST` in addition to `Host`/`X-Forwarded-Host`; the sign-in redirect uses `ENIGMA_PUBLIC_ORIGIN`. CloudFront must not forward the viewer `Host`.
-- Function URLs with `AuthType NONE` stay public at the edge; per-instance in-memory rate limiting is not a global limit; the account-wide Lambda limit (10) is the only parallelism bound (a reservation cannot be set on this account; see AWS_SESSION_COST.md).
+- Function URLs with `AuthType NONE` stay public at the edge; per-instance in-memory rate limiting is not a global limit; the account-wide Lambda limit (10) is the only parallelism bound (a reservation cannot be set on this account; see AWS_SESSION_COST.md (removed 2026-11-24)).
 
 
 ## Updated 2026-11-21 (Track B build and policy audit)

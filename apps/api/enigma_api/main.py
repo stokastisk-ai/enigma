@@ -98,7 +98,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
     if broadcaster is None:
         broadcaster = SupabaseBroadcaster(s.supabase_url, s.supabase_service_role_key) if s.supabase_url and s.supabase_service_role_key else NullBroadcaster()
 
-    docs = not (s.is_production or s.on_vercel)
+    docs = not s.is_production
     app = FastAPI(title="Enigma control-plane API", version=__version__, docs_url="/api/v1/docs" if docs else None,
                   redoc_url=None, openapi_url="/api/v1/openapi.json" if docs else None)
     import time as _time

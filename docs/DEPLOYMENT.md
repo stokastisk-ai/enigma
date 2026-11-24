@@ -1,23 +1,31 @@
-# Deployment plan and current status
+# Deployment (Railway)
 
-**Nothing is deployed.** Hosted deployment is blocked for this private, commercial, organization-owned project: see `BLOCKED_PRIVATE_ORG_HOBBY.md`. External-setup status and the exact Supabase dashboard steps: `BLOCKED_EXTERNAL_SETUP.md`.
+Enigma runs as three services in one Railway project/environment: `Enigma` (Next.js web), `enigma-api` (FastAPI) and `Postgres`. Both application services are built from this repository's `main` branch with the **repository root as the Docker build context** (the web app imports `packages/contracts`), use Railway Serverless, run one replica, and run as a non-root user.
 
-## What runs today (all local, zero spend)
-- API: `python3.13 -m uvicorn index:app --app-dir apps/api --port 8787` (in-memory store unless Supabase is configured)
-- Web: `cd apps/web && npm run build && npx next start -p 3100` (real Clerk dev instance when `apps/web/.env.local` holds the keys; otherwise the guarded dev login)
-- Connector: `python -m enigma_connector --mode mock` (labelled synthetic) or the Kaggle notebook (real GPU, not yet run)
+| | web | api |
+|---|---|---|
+| Dockerfile | `apps/web/Dockerfile` | `apps/api/Dockerfile` |
+| Port | `PORT=3000` | `PORT=8000` |
+| Health check | `/` | `/api/v1/health` (liveness) |
+| Readiness | – | `GET /api/v1/admin/ready` with `Authorization: Bearer $CRON_SECRET` (checks the database) |
+| Watch paths | `apps/web/**`, `packages/contracts/**` | `apps/api/**`, `infra/aws/sql/**` |
+| Pre-deploy | – | `python -m enigma_api.bootstrap` (applies the portable schema and creates the least-privilege database role when `ENIGMA_DB_ADMIN_DSN` is set; a no-op otherwise) |
 
-## Environment names (values only in ignored `.env.local` / provider settings; see `.env.example`)
-Web public: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_CLERK_SIGN_IN_URL`, `NEXT_PUBLIC_CLERK_SIGN_UP_URL`, `NEXT_PUBLIC_CLERK_*_FALLBACK_REDIRECT_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (legacy `..._ANON_KEY` accepted). Only these are exposed to browsers.
-Web server-only: `CLERK_SECRET_KEY`, `ENIGMA_API_URL`.
-API server-only: `ENIGMA_ENV`, `ENIGMA_STORE`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CLERK_JWKS_URL`, `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`, `CRON_SECRET`.
-Not used by the code and therefore not required: `DATABASE_URL` (the API talks to Supabase over HTTPS/PostgREST; a direct URL is only for optional migration tooling and must never be deployed), `ENIGMA_RUNTIME_TOKEN_SECRET` (runtime tokens are random 256-bit values stored hashed), any Google/Gemini key.
+Do not use `railway.toml` (Railway deprecated config-as-code) or `railway up .` from the repository root: use `scripts/railway_stage_upload.py` + `scripts/railway_enigma_deploy.py` for an exact upload, or let the GitHub-connected services build `main`.
 
-## Clerk
-Test (`pk_test_`) keys are for development domains only. A production instance needs a real domain and explicit approval; no paid add-ons or Organizations are used (Enigma has its own workspace tables). `CLERK_AUTHORIZED_PARTIES` must list the web origin(s); browser tokens carry `azp`.
+## Variables (names only; values live in Railway, never in Git)
+- **web:** `PORT`, `ENIGMA_AUTH_PROVIDER=cognito`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`, `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `ENIGMA_PUBLIC_ORIGIN`, `ENIGMA_PUBLIC_HOST`, `ENIGMA_API_URL` (private `http://<api>.railway.internal:<port>`).
+- **api:** `PORT`, `ENIGMA_STORE=postgres`, `ENIGMA_DB_DSN` (least-privilege role, `sslmode=require`), `ENIGMA_DB_APP_PASSWORD`, `ENIGMA_AUTH_PROVIDER=cognito`, `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`, `CRON_SECRET`, `ENIGMA_AWS_OPS=off`. `ENIGMA_DB_ADMIN_DSN` exists only during the first bootstrap and is then deleted.
+- Never set `ENIGMA_DEV_AUTH` in production: both tiers refuse it on Railway.
 
-## Hosting (when authorized)
-Two projects keep `/api` routes from colliding: web (root `apps/web`) and API (root `apps/api`, Python 3.13 via `.python-version`, ASGI `app` in `index.py`, daily prune cron in `vercel.json`). Vercel's Python runtime lists 3.12/3.13/3.14. These routing/limit details are **unverified** until a real deployment exists.
+## Authentication
+Amazon Cognito user pool with one public app client (no secret; `USER_PASSWORD_AUTH` + refresh tokens; email as username; email confirmation code; no hosted UI, so no callback URLs). The BFF holds tokens in `HttpOnly; Secure; SameSite=Lax` cookies (access: `Path=/`, refresh: `Path=/api`) and the API independently verifies the access token (issuer, signature via the pool JWKS, `token_use=access`, client binding) and enforces tenant membership.
 
-## Production safety
-The API refuses to start in production without Supabase store, Clerk JWKS/issuer and a cron secret, and refuses dev auth on Vercel or in production. The web proxy fails closed when no auth is configured.
+## Kaggle connector
+Set `ENIGMA_API_URL` to the API's public HTTPS origin and `ENIGMA_RUNTIME_TOKEN` (minted once in the UI, stored in a Kaggle secret). The connector polls outbound only; while it runs it keeps the API awake, and when it stops the runtime turns offline after its heartbeat expires and the API can sleep.
+
+## Retention
+`.github/workflows/retention.yml` calls `GET /api/v1/admin/prune` daily. It needs the repository secret `ENIGMA_CRON_SECRET` and the repository variable `ENIGMA_API_URL`.
+
+## Cost
+Railway Hobby ($5/month, including $5 of usage; not a spending cap). Set a workspace usage limit (soft $5, minimum hard $10) and check `railway usage` after changes. Postgres is the only always-on service.

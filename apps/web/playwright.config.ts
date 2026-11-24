@@ -9,7 +9,7 @@ const WEB = "http://127.0.0.1:3100";
 
 /**
  * Browser E2E against the REAL stack: production Next build + real FastAPI (in-memory store) + the labelled MOCK connector.
- * Auth uses the guarded dev login (no Clerk keys); that mode refuses to run on Vercel or in production.
+ * Auth uses the guarded dev login (no Clerk keys); that mode refuses to run on a hosted platform or in production.
  * System Google Chrome is used (channel: "chrome"), so no browser download is needed.
  */
 export default defineConfig({
@@ -24,7 +24,7 @@ export default defineConfig({
   projects: [{ name: "desktop", use: { ...devices["Desktop Chrome"], channel: "chrome" } }],
   webServer: [
     {
-      command: `/usr/local/bin/python3.13 -m uvicorn index:app --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning`,
+      command: `/usr/local/bin/python3.13 -m uvicorn enigma_api.main:create_app --factory --app-dir apps/api --host 127.0.0.1 --port 8787 --log-level warning`,
       cwd: root,
       url: `${API}/api/v1/health`,
       reuseExistingServer: false,

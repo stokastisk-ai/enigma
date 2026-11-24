@@ -1,5 +1,7 @@
 # AWS operations visibility — two dashboards, neither deployed
 
+> **Status 2026-11-24:** this admin page and CloudWatch dashboard target AWS-hosted resources that no longer exist (hosting moved to Railway). The page is dormant (`ENIGMA_AWS_OPS=off`); the code and tests are kept pending an owner decision to remove the feature.
+
 **Status:** CloudWatch dashboard = **DRAFT, NOT DEPLOYED**. Enigma admin page = **built and tested in MOCK (synthetic) mode; LIVE mode implemented but never run against AWS**. No AWS resource exists. No `PutDashboard`, IAM, DynamoDB, Lambda, Cognito, S3, CloudFront or Budgets call has been made.
 
 **Boundary.** Both dashboards show **AWS control-plane operations only** (web and API Lambdas, DynamoDB, CloudFront, optionally Cognito). They never show GPU or vLLM data. That comes from the user-launched Kaggle 2× T4 session (`nvidia-ml-py`, native vLLM `/metrics`) and lives on Enigma's GPU/inference pages, with its own labels, permissions and clocks. There is no AWS GPU.
@@ -24,24 +26,24 @@
 
 **Placeholders** (never real values in Git): `${AWS_REGION}`, `${WEB_FUNCTION_NAME}`, `${API_FUNCTION_NAME}`, `${DDB_TABLE_NAME}`, `${CLOUDFRONT_DISTRIBUTION_ID}`. The first widget states **"DRAFT. NOT DEPLOYED."** and that it contains no GPU data.
 
-**Offline validation** (`tests/test_cloudwatch_dashboard.py`, 15 tests, each rule has a failing-input test): approved namespaces only; every metric/dimension/unit matches a pinned catalog; valid statistics; periods ∈ {60, 300, 900, 3600}; titles state their unit; ≤ 50 series; 24-column grid with no overlap; no log/alarm/query widgets; only known placeholders; CloudFront in `us-east-1`; and `tests/api/test_awsops.py` asserts the in-app reader queries a **subset of exactly these metrics**.
-*Limit of this proof:* it checks structure against my catalog of documented metric names. Whether each metric **exists** in the account is only knowable after deployment (CloudWatch lists a metric after its first datapoint); `check_dashboard_quota.py --verify-metrics` lists the ones not yet emitted.
+**Offline validation** (`tests/test_cloudwatch_dashboard.py (removed 2026-11-24)`, 15 tests, each rule has a failing-input test): approved namespaces only; every metric/dimension/unit matches a pinned catalog; valid statistics; periods ∈ {60, 300, 900, 3600}; titles state their unit; ≤ 50 series; 24-column grid with no overlap; no log/alarm/query widgets; only known placeholders; CloudFront in `us-east-1`; and `tests/api/test_awsops.py` asserts the in-app reader queries a **subset of exactly these metrics**.
+*Limit of this proof:* it checks structure against my catalog of documented metric names. Whether each metric **exists** in the account is only knowable after deployment (CloudWatch lists a metric after its first datapoint); `check_dashboard_quota.py (removed 2026-11-24) --verify-metrics` lists the ones not yet emitted.
 
 ### Free allowance and the pre-flight (read-only)
 CloudWatch's published always-free allowance includes **3 custom dashboards** (each up to 50 metrics). **Whether it applies to this PAID-plan account is UNVERIFIED**, and dashboards, GetMetricData calls, logs and metrics are billable beyond limits. Before any `PutDashboard`:
 
 ```bash
 # offline: validates the draft, prints the procedure, calls NOTHING
-/usr/local/bin/python3.13 scripts/check_dashboard_quota.py
+/usr/local/bin/python3.13 scripts/check_dashboard_quota.py (removed 2026-11-24)
 # read-only, NON-ROOT only: counts existing dashboards, reports whether a free slot exists
-/usr/local/bin/python3.13 scripts/check_dashboard_quota.py --read-only --profile <non-root> --region <approved>
+/usr/local/bin/python3.13 scripts/check_dashboard_quota.py (removed 2026-11-24) --read-only --profile <non-root> --region <approved>
 # after resources exist: which metrics have not been emitted yet
-/usr/local/bin/python3.13 scripts/check_dashboard_quota.py --read-only --profile <non-root> --region <approved> --verify-metrics --set AWS_REGION=... --set WEB_FUNCTION_NAME=...
+/usr/local/bin/python3.13 scripts/check_dashboard_quota.py (removed 2026-11-24) --read-only --profile <non-root> --region <approved> --verify-metrics --set AWS_REGION=... --set WEB_FUNCTION_NAME=...
 ```
 The script **refuses to run as root**, has **no write call anywhere** (a test parses its AST), and reports `OK_TO_REQUEST_APPROVAL` or `STOP_NO_FREE_SLOT_OR_TOO_MANY_METRICS`. Even `OK` is not an authorisation. If a free slot is not confirmed, **stop and use the AWS console's built-in service views instead.**
 
 ### Deployment plan (not executed; needs your approval)
-1. Non-root identity and approved region (docs/AWS_ROOT_KEY_REMEDIATION.md). 2. The resources exist and have served traffic (otherwise most graphs are empty). 3. Run the read-only pre-flight above. 4. You approve the single write `cloudwatch:PutDashboard` for `Enigma-Control-Plane`. 5. Substitute the placeholders from the approved manifest and `aws cloudwatch put-dashboard`. 6. Record the dashboard URL privately; change its status here to LIVE **only** with the real URL and visible data. **Rollback:** `aws cloudwatch delete-dashboards --dashboard-names Enigma-Control-Plane`. **Log retention:** both Lambda log groups at 7 days (`infra/aws/template.yaml`); never log prompts or tokens.
+1. Non-root identity and approved region (docs/AWS_ROOT_KEY_REMEDIATION.md). 2. The resources exist and have served traffic (otherwise most graphs are empty). 3. Run the read-only pre-flight above. 4. You approve the single write `cloudwatch:PutDashboard` for `Enigma-Control-Plane`. 5. Substitute the placeholders from the approved manifest and `aws cloudwatch put-dashboard`. 6. Record the dashboard URL privately; change its status here to LIVE **only** with the real URL and visible data. **Rollback:** `aws cloudwatch delete-dashboards --dashboard-names Enigma-Control-Plane`. **Log retention:** both Lambda log groups at 7 days (`infra/aws/template.yaml (removed 2026-11-24)`); never log prompts or tokens.
 
 ---
 

@@ -1,8 +1,8 @@
 """Repository audit (skills.md section 16): AWS hosts ONLY the CPU control plane. Kaggle 2x T4 is the only GPU.
 
-Fails if any IaC, Lambda package, backend, web code or env template introduces an AWS GPU/accelerator resource, a hosted-AI fallback, a CUDA
-library in the Lambda package, or a NAT/EC2/ECS/EKS/Batch resource. Documentation is exempt (it must be able to say what is forbidden).
-Also parses both IaC templates (offline, no AWS call) so syntax/shape regressions are caught without any AWS access.
+Fails if any IaC, API requirements, backend, web code or env template introduces an AWS GPU/accelerator resource, a hosted-AI fallback, a CUDA
+library in the API image, or a NAT/EC2/ECS/EKS/Batch resource. Documentation is exempt (it must be able to say what is forbidden).
+Also parses the remaining IaC templates (offline, no AWS call) so syntax/shape regressions are caught without any AWS access.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ _L.add_multi_constructor("!", lambda loader, suffix, node: loader.construct_scal
 
 
 def _templates():
-    """CloudFormation templates only. resource-manifest.yaml is a plan document that deliberately LISTS forbidden types; it is covered by tests/test_iac_governance.py."""
+    """CloudFormation templates only (the DynamoDB table templates are all that remain)."""
     return sorted(p for p in INFRA.glob("*.yaml") if "AWSTemplateFormatVersion" in p.read_text())
 
 
@@ -62,13 +62,6 @@ def test_template_parses_and_contains_no_forbidden_resources(path):
             assert set(v) <= {"x86_64", "arm64"}
 
 
-def test_lambda_function_is_cpu_only_and_python_313():
-    doc = yaml.load((INFRA / "template.yaml").read_text(), Loader=_L)
-    fn = doc["Resources"]["ApiFunction"]["Properties"]
-    assert fn["Runtime"] == "python3.13" and "Layers" not in fn
-    assert not any(r["Type"] == "AWS::Lambda::Function" and "Image" in str(r["Properties"].get("PackageType", "")) for r in doc["Resources"].values())
-
-
 def test_dynamodb_template_has_no_gsi_and_a_least_privilege_policy():
     doc = yaml.load((INFRA / "dynamodb.yaml").read_text(), Loader=_L)
     t = doc["Resources"]["Table"]["Properties"]
@@ -79,11 +72,11 @@ def test_dynamodb_template_has_no_gsi_and_a_least_privilege_policy():
     assert any(s["Effect"] == "Deny" and "dynamodb:DeleteItem" in s["Action"] for s in stmts)       # audit rows append-only
 
 
-def test_lambda_requirements_contain_no_gpu_or_ai_provider_packages():
-    for f in ("requirements-aws.txt", "requirements.txt"):
+def test_api_requirements_contain_no_gpu_or_ai_provider_packages():
+    for f in ("requirements.txt", "requirements-railway.txt", "requirements-dev.txt"):
         txt = "\n".join(l for l in (ROOT / "apps" / "api" / f).read_text().splitlines() if not l.lstrip().startswith("#"))
-        assert not BAD_REQS.search(txt), f"{f} lists a GPU/CUDA/AI-provider package"
-    assert "psycopg" in (ROOT / "apps/api/requirements-aws.txt").read_text()
+        assert not BAD_REQS.search(txt.replace("-r requirements.txt", "")), f"{f} lists a GPU/CUDA/AI-provider package"
+    assert "psycopg" in (ROOT / "apps/api/requirements-railway.txt").read_text()
 
 
 def test_backend_never_imports_gpu_libs_or_calls_ai_providers():

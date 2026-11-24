@@ -27,4 +27,3 @@ Browser → Next.js 16 BFF → FastAPI (Python 3.13) → store (DynamoDB) ← Ka
 ## Known gaps (not fixed here)
 - No real-service evidence: DynamoDB tests ran on an emulator; the real-table parity run needs owner approval (`docs/AWS_DYNAMODB_REAL_PARITY.md`).
 - `StokastiskLlm` does not request `stream_options.include_usage`, so exact usage is unavailable until the SDK exposes it; this is why tokens stay "unavailable".
-- Web tier has an unapplied draft (`infra/aws/web-template.yaml`); the Lambda Web Adapter layer ARN is deliberately a parameter to be copied from the official README at deploy time. Newer Lambda guidance may require an additional `lambda:InvokeFunction` permission for public Function URLs; verify against current docs before the first approved deploy (applies to both templates).

@@ -1,6 +1,6 @@
 """Claim-poll pacing: poll fast while work is likely, back off while idle.
 
-Cost/latency trade-off (docs/AWS_COST_MATRIX.md): at the default 1 s poll the connector is the largest consumer of API invocations. With
+Cost/latency trade-off: at the default 1 s poll the connector is the largest consumer of API requests and keeps a sleeping Railway API awake. With
 ``claim_poll_idle_s`` > ``claim_poll_s`` the interval ramps geometrically from the fast rate up to the idle ceiling once nothing has happened for
 ``claim_hot_window_s``; any job (or the connector's start) re-opens the hot window. Defaults keep today's behaviour exactly (idle == fast).
 Worst-case pickup latency of a job submitted while idle is about the idle ceiling (plus jitter); measure it before publishing a latency claim.

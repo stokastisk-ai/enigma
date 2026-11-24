@@ -3,7 +3,7 @@
 * Runtime plane: ``Authorization: Bearer enig_rt_<8-char prefix>_<secret>``. Only sha256(secret) is stored.
   A token resolves to exactly one runtime (and therefore one workspace + project); nothing in a request body can widen that.
 * User plane: a Clerk session JWT (RS256, verified against the Clerk JWKS, issuer and authorized-party checked).
-  A dev-only HS256 mode exists for the local mock E2E; Settings.validate_for_startup() forbids it in production / on Vercel.
+  A dev-only HS256 mode exists for the local mock E2E; Settings.validate_for_startup() forbids it in production / on Railway.
 """
 from __future__ import annotations
 

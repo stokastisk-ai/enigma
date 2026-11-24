@@ -49,14 +49,13 @@ def test_staged_web_tree_has_exactly_what_the_image_needs_and_nothing_private(st
     assert not bad, bad
 
 
-def test_staged_api_tree_excludes_legacy_lambda_and_vercel_entrypoints(tmp_path):
+def test_staged_api_tree_excludes_test_only_requirements(tmp_path):
     out = tmp_path / "stage_api"
     assert run(STAGE, "--service", "api", "--out", str(out)).returncode == 0
     files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
     assert {"apps/api/Dockerfile", "apps/api/requirements-railway.txt", "apps/api/enigma_api/main.py", "apps/api/enigma_api/bootstrap.py",
             "infra/aws/sql/0001_core_schema.sql", "infra/aws/sql/0002_job_functions.sql"} <= files
-    assert not files & {"apps/api/lambda_handler.py", "apps/api/index.py", "apps/api/vercel.json", "apps/api/requirements-aws.txt"}
-    assert (ROOT / "apps/api/lambda_handler.py").exists()           # staging never removes the AWS/Vercel fallback from the repo
+    assert "apps/api/requirements-dev.txt" not in files and not [f for f in files if "lambda" in f or "vercel" in f.lower()]
 
 
 def test_stager_refuses_an_output_directory_inside_the_repo_and_a_non_empty_one(tmp_path):

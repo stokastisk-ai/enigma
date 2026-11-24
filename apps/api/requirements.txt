@@ -1,4 +1,4 @@
-# Vercel-side API only. NO torch / vllm / stokastisk / CUDA here (see docs/DEPLOYMENT.md).
+# Control-plane API only. NO torch / vllm / stokastisk / CUDA here (see docs/DEPLOYMENT.md).
 fastapi==0.163.1
 pydantic==2.14.3
 pydantic-settings==2.16.3

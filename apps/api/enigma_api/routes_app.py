@@ -338,7 +338,7 @@ def run_detail(run_id: str, request: Request, user: User):
     return {"run": run, "summary": series.run_summary(gpu_rows, vllm_rows), "provenance": _provenance(gpu_rows + vllm_rows)}
 
 
-# ------------------------------------------------------------------ housekeeping (scheduled one-shot, e.g. Vercel Cron)
+# ------------------------------------------------------------------ housekeeping (scheduled one-shot: the .github/workflows/retention.yml GitHub Actions cron calls it daily)
 admin = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 

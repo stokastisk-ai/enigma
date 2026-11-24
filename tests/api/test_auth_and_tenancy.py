@@ -174,14 +174,14 @@ def test_production_refuses_unsafe_config(kwargs, expect):
     assert expect in str(e.value)
 
 
-def test_vercel_env_blocks_dev_auth(monkeypatch):
-    monkeypatch.setenv("VERCEL", "1")
+def test_railway_env_blocks_dev_auth(monkeypatch):
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
     with pytest.raises(RuntimeError, match="DEV_AUTH"):
         create_app(Settings(env="development", dev_auth=True, dev_jwt_secret="d" * 40))
 
 
 def test_docs_hidden_in_production_config(monkeypatch):
-    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
     app = create_app(Settings(env="development", store="supabase", supabase_url="https://x.supabase.co", supabase_service_role_key="k",
                               clerk_jwks_url="https://c/.well-known/jwks.json", clerk_issuer="https://c", cron_secret="c" * 32))
     with TestClient(app) as c:

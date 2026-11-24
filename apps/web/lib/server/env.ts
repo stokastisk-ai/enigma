@@ -13,7 +13,7 @@ export const clerkConfigured = () =>
 /** True when a real identity provider (Cognito or Clerk) is configured. */
 export const realAuthConfigured = () => cognitoSelected() || clerkConfigured();
 
-/** Dev auth exists only for local mock E2E. It can never be enabled on Vercel/AWS/Railway-hosted production or when a real provider is configured. */
+/** Dev auth exists only for local mock E2E. It can never be enabled on Railway/AWS-hosted production or when a real provider is configured. */
 export const devAuthAllowed = () => devAuthEnabled();
 
 export const apiBase = () => (process.env.ENIGMA_API_URL ?? process.env.ENIGMA_API_BASE_URL ?? "").replace(/\/$/, "");

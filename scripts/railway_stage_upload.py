@@ -27,8 +27,8 @@ SERVICES = {
 DOCKERFILE = {"web": "apps/web/Dockerfile", "api": "apps/api/Dockerfile"}
 EXCLUDE_DIRS = {"node_modules", "__pycache__", ".pytest_cache", ".git", ".enigma-local", "test-results", "playwright-report", "e2e", "e2e-live",
                 ".amplify-hosting", "scripts"}
-# Legacy AWS/Vercel entrypoints stay in the repo (fallback) but are never uploaded to Railway: the images do not use them.
-EXCLUDE_FILES = {"apps/api/index.py", "apps/api/lambda_handler.py", "apps/api/vercel.json", "apps/api/requirements-aws.txt", "apps/api/requirements-dev.txt"}
+# Test-only requirements are never uploaded to Railway: the images do not use them.
+EXCLUDE_FILES = {"apps/api/requirements-dev.txt"}
 EXCLUDE_GLOBS = [".next*", ".env*", "*.backup-*", "*.tsbuildinfo", "*.pyc", "*.zip", "*.whl", "*.log", "*.pem", "*.key", ".railway*", "playwright*.ts", "README.md"]
 SECRET = re.compile(r"(AKIA[0-9A-Z]{16}|sk_(live|test)_[A-Za-z0-9]{10,}|pk_(live|test)_[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{20,}|"
                     r"postgres(ql)?://[^\s:@/]+:[^\s@/]{4,}@|\b\d{12}\b.{0,10}arn:aws|arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:)")

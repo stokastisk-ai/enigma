@@ -1,5 +1,5 @@
 """In-memory Store for unit tests and the local mock E2E. It mirrors the SQL functions' semantics; it is NOT durable and
-Settings.validate_for_startup() refuses it in production. State dies with the process (fine for tests, wrong for Vercel)."""
+Settings.validate_for_startup() refuses it in production. State dies with the process (fine for tests, wrong for any deployment)."""
 from __future__ import annotations
 
 import copy

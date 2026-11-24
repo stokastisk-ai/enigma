@@ -1,6 +1,6 @@
 """Regression: `next dev --hostname 127.0.0.1` with Clerk configured must answer, not proxy to itself (ECONNRESET / "socket hang up").
 
-Root cause (2026-11-23, reproduced against the real server, see docs/ENIGMA_NEXT16_LOCAL_RUNTIME_REPAIR_REPORT.md):
+Root cause (2026-11-23, reproduced against the real server):
   * Next's `NextURL` canonicalises every loopback IP to the string `localhost`, so `NextRequest.url` is `http://localhost:3000/...` even when the
     server is bound to and addressed as 127.0.0.1.
   * `@clerk/nextjs` `decorateRequest` answers a pass-through request with `x-middleware-rewrite: <req.url>` (same URL, plus decorated headers).

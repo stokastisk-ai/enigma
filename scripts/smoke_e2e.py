@@ -32,7 +32,7 @@ def main() -> int:
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     base = f"http://127.0.0.1:{port}"
     env = {**os.environ, "ENIGMA_ENV": "development", "ENIGMA_DEV_AUTH": "true", "ENIGMA_DEV_JWT_SECRET": SECRET, "PYTHONDONTWRITEBYTECODE": "1"}
-    api = subprocess.Popen([sys.executable, "-m", "uvicorn", "index:app", "--app-dir", str(ROOT / "apps" / "api"), "--port", str(port), "--log-level", "warning"], env=env)
+    api = subprocess.Popen([sys.executable, "-m", "uvicorn", "enigma_api.main:create_app", "--factory", "--app-dir", str(ROOT / "apps" / "api"), "--port", str(port), "--log-level", "warning"], env=env)
     conn = None
     try:
         for _ in range(100):

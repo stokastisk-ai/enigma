@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # (no NAT gateway). Operational risk: if Cognito rotates the pool's keys, tokens with the new `kid` are refused until this is updated.
     cognito_jwks_json: str = Field(default="", validation_alias="COGNITO_JWKS_JSON")
     cognito_token_use: str = Field(default="access", validation_alias="COGNITO_TOKEN_USE")   # access | id
-    # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Vercel.
+    # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Railway.
     dev_auth: bool = False
     dev_jwt_secret: str = ""
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
@@ -65,11 +65,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.env == "production" or bool(os.environ.get("VERCEL_ENV") == "production") or self.on_railway
-
-    @property
-    def on_vercel(self) -> bool:
-        return bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+        return self.env == "production" or self.on_railway
 
     @property
     def on_railway(self) -> bool:
@@ -79,7 +75,7 @@ class Settings(BaseSettings):
     def validate_for_startup(self) -> list[str]:
         """Return a list of fatal configuration problems. Called at app creation; production refuses to boot with any."""
         problems: list[str] = []
-        prod = self.is_production or self.on_vercel or self.on_railway
+        prod = self.is_production
         if self.auth_provider not in ("clerk", "cognito"):
             problems.append("ENIGMA_AUTH_PROVIDER must be 'clerk' or 'cognito'")
         if self.auth_provider == "cognito" and (self.cognito_region or self.cognito_user_pool_id):
@@ -96,7 +92,7 @@ class Settings(BaseSettings):
                 problems.append("COGNITO_JWKS_JSON must be a JWKS document with RSA keys that carry a kid")
         if self.aws_ops not in ("off", "mock", "live"):
             problems.append("ENIGMA_AWS_OPS must be off, mock or live")
-        if self.aws_ops == "mock" and (self.is_production or self.on_vercel):
+        if self.aws_ops == "mock" and self.is_production:
             problems.append("ENIGMA_AWS_OPS=mock (synthetic data) is refused in production")
         if self.aws_ops == "live":
             from .awsops import Manifest, ManifestError
@@ -109,7 +105,7 @@ class Settings(BaseSettings):
         if self.cognito_token_use not in ("access", "id"):
             problems.append("COGNITO_TOKEN_USE must be 'access' or 'id'")
         if self.dev_auth and (prod or self.env not in ("development", "test")):
-            problems.append("ENIGMA_DEV_AUTH must not be enabled in production/Vercel/non-dev environments")
+            problems.append("ENIGMA_DEV_AUTH must not be enabled in production/Railway/non-dev environments")
         if self.dev_auth and len(self.dev_jwt_secret) < 32:
             problems.append("ENIGMA_DEV_JWT_SECRET must be at least 32 characters when dev auth is on")
         if prod:

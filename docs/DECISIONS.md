@@ -10,4 +10,4 @@
 8. **`cacheComponents` off, all routes dynamic**: auth config must be read at runtime.
 9. **`shadcn` CLI is a devDependency** (its minimatch advisory chain is build-time tooling); production deps audit clean.
 10. **Grafana (AGPL-3.0-only) is inspiration only**: left nav, global time range, per-panel error/empty states, table-view drill-down. No code copied.
-11. Dev auth exists solely for local E2E and is blocked in production/Vercel.
+11. Dev auth exists solely for local E2E and is blocked in production and on Railway.

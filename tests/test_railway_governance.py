@@ -21,7 +21,7 @@ RAILWAY_ENV = ("RAILWAY_ENVIRONMENT_ID", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PR
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    for k in RAILWAY_ENV + ("VERCEL", "VERCEL_ENV"):
+    for k in RAILWAY_ENV:
         monkeypatch.delenv(k, raising=False)
 
 

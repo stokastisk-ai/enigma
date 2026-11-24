@@ -169,7 +169,7 @@ EXIT_HINTS = [
     (re.compile(r"Cannot find module|MODULE_NOT_FOUND|next: not found|sh: 1: next", re.I), "DEPENDENCIES_MISSING", "run `npm ci` in apps/web"),
     (re.compile(r"ENOENT.*package\.json|Missing script", re.I), "WRONG_DIRECTORY_OR_SCRIPT", "npm did not find a package.json/script in the working directory"),
     (re.compile(r"Error: .*(config|next\.config)|Failed to load", re.I), "CONFIG_ERROR", "next.config/proxy failed to load"),
-    (re.compile(r"ECONNRESET|socket hang up|Failed to proxy", re.I), "SELF_PROXY_LOOP", "Next proxied a request to itself (see docs/ENIGMA_NEXT16_LOCAL_RUNTIME_REPAIR_REPORT.md)"),
+    (re.compile(r"ECONNRESET|socket hang up|Failed to proxy", re.I), "SELF_PROXY_LOOP", "Next proxied a request to itself (see apps/web/lib/server/loopback-rewrite.ts)"),
 ]
 
 

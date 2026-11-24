@@ -6,7 +6,6 @@
 .claude
 **/node_modules
 **/.next*
-**/.amplify-hosting
 **/__pycache__
 **/.pytest_cache
 **/test-results
