@@ -212,3 +212,108 @@ def test_verify_dsn_gets_a_ca_bundle_and_other_dsns_are_untouched():
     assert _with_ca_bundle("host=h dbname=d sslmode=verify-ca").count("sslrootcert=") == 1
     assert _with_ca_bundle(url + "&sslrootcert=/x.pem") == url + "&sslrootcert=/x.pem"      # explicit setting wins
     assert _with_ca_bundle("postgresql://u:p@h/db?sslmode=require") == "postgresql://u:p@h/db?sslmode=require"
+
+
+# ---------------------------------------------------------------- owner-run identity linking (scripts/link_identity.py)
+def _load_link_script():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("link_identity", run_sql_tests.ROOT / "scripts" / "link_identity.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture
+def link(pg, monkeypatch, capsys):
+    mod = _load_link_script()
+    with psycopg.connect(pg["admin"], autocommit=True) as c:      # minimal stand-in for the table Neon Auth owns (real columns used by the script)
+        c.execute('create schema if not exists neon_auth')
+        c.execute('create table if not exists neon_auth."user" (id text primary key, email text, "emailVerified" boolean, banned boolean)')
+        c.execute('truncate neon_auth."user"')
+    monkeypatch.setenv("ENIGMA_LINK_DSN", pg["admin"])
+
+    def run(*argv):
+        rc = mod.main(list(argv))
+        out = capsys.readouterr()
+        return rc, out.out + out.err
+    return run
+
+
+def _seed(pg, roles=("owner", "viewer")):
+    with psycopg.connect(pg["admin"], autocommit=True) as c:
+        wss = []
+        for i, role in enumerate(roles):
+            ws = c.execute("insert into workspaces (name, slug, created_by) values (%s,%s,%s) returning id", (f"w{i}", f"w{i}", "cognito:old")).fetchone()[0]
+            c.execute("insert into memberships (workspace_id, user_id, role) values (%s,'cognito:old',%s)", (ws, role))
+            wss.append(ws)
+        c.execute('insert into neon_auth."user" values (%s,%s,%s,%s)', ("n-good", "someone@example.test", True, False))
+        return wss
+
+
+def _members(pg):
+    with psycopg.connect(pg["admin"]) as c:
+        return sorted(c.execute("select user_id, role from memberships").fetchall())
+
+
+def test_link_refuses_email_like_or_wrongly_namespaced_identities(pg, link):
+    _seed(pg)
+    for a, b in [("someone@example.test", "neon:n-good"), ("cognito:old", "someone@example.test"), ("neon:old", "neon:n-good"), ("cognito:old", "cognito:other")]:
+        rc, _ = link("--from", a, "--to", b, "--apply")
+        assert rc == 2
+    assert _members(pg) == [("cognito:old", "owner"), ("cognito:old", "viewer")]
+
+
+def test_link_dry_run_changes_nothing_then_apply_is_additive_audited_and_idempotent(pg, link):
+    _seed(pg)
+    before = _members(pg)
+    rc, out = link("--from", "cognito:old", "--to", "neon:n-good")
+    assert rc == 0 and "dry run: 2 change(s)" in out and "so***@example.test" in out and "someone@" not in out
+    assert _members(pg) == before
+    rc, out = link("--from", "cognito:old", "--to", "neon:n-good", "--apply")
+    assert rc == 0 and "applied: 2" in out
+    assert _members(pg) == sorted(before + [("neon:n-good", "owner"), ("neon:n-good", "viewer")])     # same roles; Cognito memberships untouched
+    with psycopg.connect(pg["admin"]) as c:
+        audit = c.execute("select actor, action, target_id, meta::text from audit_events order by id").fetchall()
+    assert len(audit) == 2 and all(a[0] == "operator:link_identity" and a[1] == "identity.link" and a[2] == "neon:n-good" for a in audit)
+    assert all("example.test" not in a[3] for a in audit)                                              # no e-mail in the audit trail
+    rc, out = link("--from", "cognito:old", "--to", "neon:n-good", "--apply")
+    assert rc == 0 and "applied: 0" in out and "already a member" in out
+
+
+def test_link_never_changes_an_existing_neon_role(pg, link):
+    wss = _seed(pg)
+    with psycopg.connect(pg["admin"], autocommit=True) as c:
+        c.execute("insert into memberships (workspace_id, user_id, role) values (%s,'neon:n-good','viewer')", (wss[0],))
+    link("--from", "cognito:old", "--to", "neon:n-good", "--apply")
+    with psycopg.connect(pg["admin"]) as c:
+        assert c.execute("select role from memberships where workspace_id=%s and user_id='neon:n-good'", (wss[0],)).fetchone()[0] == "viewer"
+
+
+def test_link_unlink_is_an_exact_reversal(pg, link):
+    _seed(pg)
+    before = _members(pg)
+    link("--from", "cognito:old", "--to", "neon:n-good", "--apply")
+    rc, out = link("--from", "cognito:old", "--to", "neon:n-good", "--unlink")
+    assert rc == 0 and "dry run" in out and len(_members(pg)) == 4
+    rc, out = link("--from", "cognito:old", "--to", "neon:n-good", "--unlink", "--apply")
+    assert rc == 0 and _members(pg) == before
+
+
+@pytest.mark.parametrize("row,why", [(("n-x", "u@example.test", False, False), "unverified"), (("n-x", "u@example.test", True, True), "banned")])
+def test_link_refuses_unverified_or_banned_neon_accounts(pg, link, row, why):
+    _seed(pg)
+    with psycopg.connect(pg["admin"], autocommit=True) as c:
+        c.execute('insert into neon_auth."user" values (%s,%s,%s,%s)', row)
+    rc, _ = link("--from", "cognito:old", "--to", "neon:n-x", "--apply")
+    assert rc == 3 and _members(pg) == [("cognito:old", "owner"), ("cognito:old", "viewer")]
+
+
+def test_link_refuses_unknown_users_and_sources_without_workspaces(pg, link):
+    _seed(pg)
+    assert link("--from", "cognito:old", "--to", "neon:ghost", "--apply")[0] == 3
+    assert link("--from", "cognito:nobody", "--to", "neon:n-good", "--apply")[0] == 3
+
+
+def test_link_requires_the_dsn_in_the_environment(pg, link, monkeypatch):
+    monkeypatch.delenv("ENIGMA_LINK_DSN")
+    assert link("--from", "cognito:old", "--to", "neon:n-good")[0] == 2

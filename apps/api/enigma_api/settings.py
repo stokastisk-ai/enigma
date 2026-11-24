@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # (no NAT gateway). Operational risk: if Cognito rotates the pool's keys, tokens with the new `kid` are refused until this is updated.
     cognito_jwks_json: str = Field(default="", validation_alias="COGNITO_JWKS_JSON")
     cognito_token_use: str = Field(default="access", validation_alias="COGNITO_TOKEN_USE")   # access | id
+    # Neon Managed Better Auth (additive to Cognito: tokens are EdDSA, so they can never be confused with Cognito RS256 tokens).
+    # NEON_AUTH_BASE_URL is the branch's public Auth URL (not a secret). Empty = Neon tokens are refused.
+    neon_auth_base_url: str = Field(default="", validation_alias="NEON_AUTH_BASE_URL")
+    neon_auth_jwks_url: str = Field(default="", validation_alias="NEON_AUTH_JWKS_URL")          # optional override; default <base>/.well-known/jwks.json
+    neon_require_verified_email: bool = True                                                        # env ENIGMA_NEON_REQUIRE_VERIFIED_EMAIL
     # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Railway.
     dev_auth: bool = False
     dev_jwt_secret: str = ""
@@ -62,6 +67,17 @@ class Settings(BaseSettings):
     @property
     def cognito_jwks_url(self) -> str:
         return self.cognito_issuer + "/.well-known/jwks.json" if self.cognito_issuer else ""
+
+    @property
+    def neon_origin(self) -> str:
+        """Managed Better Auth sets `iss` and `aud` to the ORIGIN of the Auth URL (not the full URL). Empty when not configured or not https."""
+        from urllib.parse import urlparse
+        u = urlparse(self.neon_auth_base_url)
+        return f"https://{u.netloc}" if u.scheme == "https" and u.netloc else ""
+
+    @property
+    def neon_jwks_url(self) -> str:
+        return self.neon_auth_jwks_url or (self.neon_auth_base_url.rstrip("/") + "/.well-known/jwks.json" if self.neon_origin else "")
 
     @property
     def is_production(self) -> bool:
@@ -90,6 +106,11 @@ class Settings(BaseSettings):
                     raise ValueError
             except ValueError:
                 problems.append("COGNITO_JWKS_JSON must be a JWKS document with RSA keys that carry a kid")
+        if self.neon_auth_base_url or self.neon_auth_jwks_url:
+            if not self.neon_origin:
+                problems.append("NEON_AUTH_BASE_URL must be an https URL (it pins the token issuer and audience)")
+            elif self.neon_auth_jwks_url and not self.neon_auth_jwks_url.startswith(self.neon_origin + "/"):
+                problems.append("NEON_AUTH_JWKS_URL must be on the same origin as NEON_AUTH_BASE_URL")
         if self.aws_ops not in ("off", "mock", "live"):
             problems.append("ENIGMA_AWS_OPS must be off, mock or live")
         if self.aws_ops == "mock" and self.is_production:

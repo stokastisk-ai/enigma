@@ -2,7 +2,8 @@
 
 * Runtime plane: ``Authorization: Bearer enig_rt_<8-char prefix>_<secret>``. Only sha256(secret) is stored.
   A token resolves to exactly one runtime (and therefore one workspace + project); nothing in a request body can widen that.
-* User plane: a Clerk session JWT (RS256, verified against the Clerk JWKS, issuer and authorized-party checked).
+* User plane: a Clerk session JWT (RS256, verified against the Clerk JWKS, issuer and authorized-party checked), a Cognito RS256 JWT, or a Neon
+  Managed Better Auth JWT (EdDSA, JWKS of the Auth URL, issuer and audience = its origin). The algorithm selects the verifier, so providers coexist.
   A dev-only HS256 mode exists for the local mock E2E; Settings.validate_for_startup() forbids it in production / on Railway.
 """
 from __future__ import annotations
@@ -86,8 +87,8 @@ def verify_runtime_token(store: Any, token: str, now: datetime | None = None) ->
 # ---------------------------------------------------------------- user tokens
 @dataclass(frozen=True)
 class UserIdentity:
-    user_id: str          # provider-namespaced subject: Clerk `sub` as-is (historical), Cognito `cognito:<sub>`; never assume equal across providers
-    auth: str             # "clerk" | "cognito" | "dev"
+    user_id: str          # provider-namespaced subject: Clerk `sub` as-is (historical), Cognito `cognito:<sub>`, Neon `neon:<sub>`; never equal across providers
+    auth: str             # "clerk" | "cognito" | "neon" | "dev"
 
 
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
@@ -173,6 +174,30 @@ class UserVerifier:
         self._jwk_client: jwt.PyJWKClient | None = None
         self._jwks_fetch, self._clock = jwks_fetch, clock
         self._cognito_keys: JwksCache | None = None
+        self._neon_keys: JwksCache | None = None
+
+    def _verify_neon(self, token: str) -> "UserIdentity":
+        """Neon Managed Better Auth JWT: EdDSA (Ed25519), 15-minute expiry. `iss` AND `aud` must equal the origin of the configured Auth URL, so a token from
+        any other Neon project/branch is refused. A banned account, or (by default) an account whose e-mail is not verified, is refused. The `sub` is
+        namespaced as `neon:<sub>` so it can never equal, and is never merged with, a Cognito identity (no e-mail based linking)."""
+        unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
+        s = self.s
+        origin = s.neon_origin
+        if not origin:
+            raise unauthorized
+        if self._resolver:
+            key = self._resolver(token)
+        else:
+            if self._neon_keys is None:
+                self._neon_keys = JwksCache(s.neon_jwks_url, "", self._jwks_fetch, self._clock)
+            key = self._neon_keys.key_for(jwt.get_unverified_header(token).get("kid"))
+        claims = jwt.decode(token, key, algorithms=["EdDSA"], issuer=origin, audience=origin,
+                            options={"require": ["exp", "iat", "sub", "iss", "aud"]})
+        if claims.get("banned") is True:
+            raise unauthorized
+        if s.neon_require_verified_email and claims.get("emailVerified") is not True:
+            raise unauthorized
+        return UserIdentity(f"neon:{_valid_subject(claims['sub'])}", "neon")
 
     def _verify_cognito(self, token: str) -> "UserIdentity":
         """Cognito user-pool JWT: RS256, issuer pinned to the pool, expiry, ``token_use`` and app-client binding all enforced.
@@ -221,6 +246,8 @@ class UserVerifier:
                     raise unauthorized
                 claims = jwt.decode(token, self.s.dev_jwt_secret, algorithms=["HS256"], audience="enigma-dev", options={"require": ["exp", "sub"]})
                 return UserIdentity(str(claims["sub"]), "dev")
+            if alg == "EdDSA":
+                return self._verify_neon(token)
             if alg != "RS256":
                 raise unauthorized
             if self.s.auth_provider == "cognito":
@@ -237,5 +264,5 @@ class UserVerifier:
             return UserIdentity(_valid_subject(claims["sub"]), "clerk")
         except ApiError:
             raise
-        except (jwt.PyJWTError, KeyError, OSError):
+        except (jwt.PyJWTError, KeyError, OSError, TypeError, ValueError):   # TypeError/ValueError: key-type mismatch or malformed JWK must be a 401, never a 500
             raise unauthorized from None

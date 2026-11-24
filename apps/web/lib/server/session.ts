@@ -2,8 +2,9 @@ import { createHmac } from "node:crypto";
 import { cookies } from "next/headers";
 import { clerkConfigured, cognitoSelected, devAuthAllowed } from "./env";
 import { COOKIE_ACCESS, COOKIE_REFRESH, REFRESH_COOKIE_PATH, authCookieOptions, cognitoConfig, refresh, verifyAccessToken, type Tokens } from "./cognito";
+import { neonAuthEnabled, neonSession } from "./neon-auth";
 
-export type Session = { userId: string; token: string; mode: "clerk" | "cognito" | "dev" };
+export type Session = { userId: string; token: string; mode: "clerk" | "cognito" | "neon" | "dev" };
 
 const b64 = (o: unknown) => Buffer.from(typeof o === "string" ? o : JSON.stringify(o)).toString("base64url");
 
@@ -53,8 +54,17 @@ async function cognitoSession(): Promise<Session | null> {
   }
 }
 
+/** Neon Managed Better Auth session -> Enigma session. The identity is namespaced `neon:<id>` (same value the API derives from the token's `sub`). */
+async function neonCookieSession(): Promise<Session | null> {
+  if (!neonAuthEnabled()) return null;
+  const jar = await cookies();
+  const r = await neonSession(jar.getAll().map((c) => c.name), (n) => jar.get(n)?.value);
+  return r ? { userId: `neon:${r.user.id}`, token: r.token, mode: "neon" } : null;
+}
+
 export async function getSession(): Promise<Session | null> {
-  if (cognitoSelected()) return cognitoSession();
+  // Cognito stays first (existing users, rollback path); a Neon session is only consulted when there is no valid Cognito session.
+  if (cognitoSelected()) return (await cognitoSession()) ?? (await neonCookieSession());
   if (clerkConfigured()) {
     const { auth } = await import("@clerk/nextjs/server");
     const { userId, getToken } = await auth();
@@ -62,6 +72,8 @@ export async function getSession(): Promise<Session | null> {
     const token = await getToken();
     return token ? { userId, token, mode: "clerk" } : null;
   }
+  const n = await neonCookieSession();
+  if (n) return n;
   if (devAuthAllowed()) {
     // optional dev identity switch so E2E can prove tenant isolation with two users
     const jar = await cookies();
