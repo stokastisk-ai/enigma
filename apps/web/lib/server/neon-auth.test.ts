@@ -36,8 +36,8 @@ test("minted tokens are cached briefly, never past their own expiry, and keyed b
   assert.ok(!k.includes("cookie-value"));
   const longLived = jwt(Math.floor(now / 1000) + 900);                 // 15 min
   cachePut(k, longLived, now);
-  assert.equal(cacheGet(k, now + 9 * 60_000), longLived);              // within 10 min
-  assert.equal(cacheGet(k, now + 11 * 60_000), null);                  // capped at 10 min
+  assert.equal(cacheGet(k, now + 4 * 60_000), longLived);              // within 5 min (TOKEN_CACHE_MS)
+  assert.equal(cacheGet(k, now + 6 * 60_000), null);                   // capped at 5 min even though the token lives 15
   const k2 = sessionKey("user-2:c");
   cachePut(k2, jwt(Math.floor(now / 1000) + 90), now);                 // 90 s left: usable for 30 s only (60 s safety margin)
   assert.ok(cacheGet(k2, now + 20_000));
