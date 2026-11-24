@@ -27,6 +27,8 @@ from .supabase import StoreUnavailable      # same 503 mapping in the routes
 log = logging.getLogger("enigma.postgres")
 
 IDLE_PROBE_S = 30.0
+IDLE_RECYCLE_S = 120.0      # idle longer than this: close and reopen (a suspended Neon compute or frozen container has dropped it anyway)
+CONNECT_ATTEMPTS = 3        # bounded retries so a cold Neon compute (scale-to-zero wake-up) is not surfaced as a 503
 _CRED_PUBLIC = "id,workspace_id,project_id,runtime_id,prefix,scopes,created_by,created_at,expires_at,revoked_at,last_used_at"
 
 
@@ -41,11 +43,25 @@ def _clean(v: Any) -> Any:
     return v
 
 
+def _with_ca_bundle(dsn: str) -> str:
+    """``sslmode=verify-ca/verify-full`` without an explicit ``sslrootcert``: use certifi's bundle. psycopg's bundled libpq does not find an OS
+    trust store, and the slim Railway image has none. A DSN that sets sslrootcert itself (or does not verify) is returned unchanged."""
+    if "sslmode=verify-" not in dsn or "sslrootcert" in dsn:
+        return dsn
+    try:
+        import certifi
+    except ImportError:                                             # pragma: no cover - httpx always brings certifi
+        return dsn
+    if "://" in dsn:
+        return f"{dsn}{'&' if '?' in dsn else '?'}sslrootcert={certifi.where()}"
+    return f"{dsn} sslrootcert={certifi.where()}"
+
+
 class PostgresStore(Store):
-    def __init__(self, dsn: str, *, statement_timeout_ms: int = 8000, connect_timeout_s: int = 5, connect=None):
+    def __init__(self, dsn: str, *, statement_timeout_ms: int = 8000, connect_timeout_s: int = 10, connect=None):
         if not dsn:
             raise ValueError("ENIGMA_DB_DSN is required for the postgres store")
-        self._dsn, self._stmt_ms, self._conn_s = dsn, statement_timeout_ms, connect_timeout_s
+        self._dsn, self._stmt_ms, self._conn_s = _with_ca_bundle(dsn), statement_timeout_ms, connect_timeout_s
         self._connect = connect or psycopg.connect
         self._conn: psycopg.Connection | None = None
         self._lock = threading.Lock()
@@ -60,19 +76,28 @@ class PostgresStore(Store):
         """Return a healthy connection. Opening is retried once (nothing has been sent yet). A connection idle longer than
         IDLE_PROBE_S (a frozen Lambda environment may hold a dead socket) is probed with a harmless `select 1` and replaced if dead."""
         now = time.monotonic()
-        if self._conn is not None and not self._conn.closed and now - self._last_used > IDLE_PROBE_S:
-            try:
-                self._conn.execute("select 1")
-            except psycopg.Error:
+        if self._conn is not None and not self._conn.closed:
+            idle = now - self._last_used
+            if idle > IDLE_RECYCLE_S:
+                try:
+                    self._conn.close()
+                except psycopg.Error:
+                    pass
                 self._conn = None
+            elif idle > IDLE_PROBE_S:
+                try:
+                    self._conn.execute("select 1")
+                except psycopg.Error:
+                    self._conn = None
         if self._conn is None or self._conn.closed:
-            for attempt in (1, 2):
+            for attempt in range(1, CONNECT_ATTEMPTS + 1):
                 try:
                     self._conn = self._open()
                     break
                 except psycopg.Error as e:
-                    if attempt == 2:
+                    if attempt == CONNECT_ATTEMPTS:
                         raise StoreUnavailable(f"database unavailable: {type(e).__name__}") from None
+                    time.sleep(0.5 * attempt)
         return self._conn
 
     def _run(self, sql: str, args: tuple | list | None = None) -> list[Row] | None:

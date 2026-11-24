@@ -202,3 +202,13 @@ def test_ready_probe_succeeds_with_the_least_privilege_role_and_fails_closed_whe
     with pytest.raises(StoreUnavailable) as e:
         broken.ready()
     assert "password" not in str(e.value).lower()
+
+
+def test_verify_dsn_gets_a_ca_bundle_and_other_dsns_are_untouched():
+    from enigma_api.store.postgres import _with_ca_bundle
+    url = "postgresql://u:p@h.example/db?sslmode=verify-full&channel_binding=require"
+    out = _with_ca_bundle(url)
+    assert out.startswith(url + "&sslrootcert=") and out.endswith(".pem")
+    assert _with_ca_bundle("host=h dbname=d sslmode=verify-ca").count("sslrootcert=") == 1
+    assert _with_ca_bundle(url + "&sslrootcert=/x.pem") == url + "&sslrootcert=/x.pem"      # explicit setting wins
+    assert _with_ca_bundle("postgresql://u:p@h/db?sslmode=require") == "postgresql://u:p@h/db?sslmode=require"

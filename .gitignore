@@ -38,3 +38,4 @@ test-results/
 
 # private AWS discovery metadata
 /.enigma-local/
+.neon
