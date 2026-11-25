@@ -710,3 +710,191 @@ This section supplements all prior non-root, privacy, GPU, Kaggle, GitHub and AW
 - `scripts/enigma_aws_budget_audit.py` exit codes: 0 verified, 2 refused, 10 missing, 11 misconfigured, 12 permission denied, 13 unverified; output never contains account IDs, ARNs or e-mails. Details: `docs/AWS_BUDGET_VERIFICATION.md`.
 - API Lambda memory in `infra/aws/template.yaml` aligned to 512 MB (manifest and cost model already assumed 512).
 - Open pre-deploy item: confirm whether public Function URLs now also need a `lambda:InvokeFunction` permission statement (docs/AWS_SESSION_COST.md §4).
+
+## Section 22 — Next.js 16 Amplify-first repair and static-export evidence gate (2026-11-23)
+
+**Scope and precedence:** Addendum to the owner's current `skills.md`. It supersedes older instructions only regarding the choice of Next.js 16 Amplify deployment mode and local Python interpreter. All stricter security, billing, Git privacy, AWS non-root, local GPU isolation and explicit AWS-write-approval rules remain in force. Preserve the entire previous document and do not duplicate this section.
+
+### Product and interpreter
+- Enigma is an authenticated **dynamic Next.js 16.4.6** observability and chat application connected to separate FastAPI **Python 3.13** on AWS Lambda, Cognito, DynamoDB and the user-started Kaggle Stokastisk connector. Its AWS web tier is requested on **Amplify Hosting**. Preserve runtime auth/BFF, project separation, dashboards, chat, historical metrics, callbacks, cookies and dynamic routes.
+- Local interpreter **MUST be `/usr/local/bin/python3.13`**. `python3.11` is not installed. The filename `enigma_amplify_preflight_py311.py` denotes the previous compatible helper, not the project's runtime. Do not install or invoke Python 3.11. No `uv`, `ruff`, venv/virtualenv, Poetry, Conda or local CUDA/GPU access.
+- The laptop's GeForce 940M must never be probed. Never create GPU services or run vLLM on AWS. Only user-launched Kaggle 2 × Tesla T4 with Stokastisk build 5 can run inference.
+
+### Source PDF scope
+- Uploaded u11d PDF/article, **“Next.js 16 SSG on AWS Amplify: A Practical, Cost-Effective Deployment Guide”** (Jan 30 2026), documents **static export only**: `output: 'export'`, `images.unoptimized: true`, `amplify.yml` `baseDirectory: out` and a static hosting flow. The PDF explicitly says this approach has **no API routes, SSR, ISR or per-request dynamic behavior** and dynamic paths need build-time `generateStaticParams`. It does NOT demonstrate Amplify managed SSR for Next.js 16.
+- Never copy its `next.config.*`, `out/` artifact setting, catch-all rewrite to `index.html`, or `git add .` into the current authenticated Enigma app without a full route/auth/API compatibility audit and regression proof. Its SSG instructions may apply to an independently authorized static-only variant, not silently to the current application.
+- Current AWS official managed SSR docs describe **Next.js 12–15**. The custom `.amplify-hosting` deployment specification may offer a route for 16 but requires real AWS validation. Links: https://docs.aws.amazon.com/amplify/latest/userguide/ssr-amplify-support.html and https://docs.aws.amazon.com/amplify/latest/userguide/ssr-deployment-specification.html . Recheck before conclusions.
+
+### Repair workflow and mandatory deliverables
+- Read current `CLAUDE.md`, ALL `skills.md`, local Git state, frontend/backend/connector sources, `infra/aws/amplify.yml`, builder, `apps/web/next.config.*`, AWS manifest, the preflight JSON and tests. Verify rather than trust older SHA/test counts.
+- Preflight observations: Next.js 16.4.6; missing root `amplify.yml`; `enigma-deployer` role SSO verified; **zero Amplify apps returned for `us-east-1`**. There is no evidenced live Amplify deployment. Missing root buildspec is a local configuration finding, not by itself proof of a failed hosted build.
+- Use reviewed **repository-root `amplify.yml`** consistent with AWS monorepo rules and `AMPLIFY_MONOREPO_APP_ROOT=apps/web`; verify `buildPath`, `appRoot`, baseDirectory, lockfile and all build commands. Never blindly copy the existing nested buildspec without validating it. Official reference: https://docs.aws.amazon.com/amplify/latest/userguide/monorepo-configuration.html .
+- Create `docs/AWS_AMPLIFY_NEXT16_ROUTE_MATRIX.md` documenting every route's SSG/SSR/API/auth requirements. Preserve dynamic Next.js 16 if any required functionality is incompatible with export. Validate the existing custom compute bundle with official manifest format, port, deployment directory, cookies, redirects, BFF, Cognito, environment/secret constraints and local SSR tests. Maintain Lambda Web Adapter alternative in source for contingency.
+- Do not assume `python3.13` exists in AWS Amplify's hosted build image. Document reproducible setup or remove Python dependency from its Node build pipeline without changing FastAPI's own Python 3.13 runtime.
+- Run fresh CPU-only tests, Next.js build/typecheck/lint, Node tests, Playwright mock E2E, secret checks and governed buildspec validations. Record results accurately and distinguish locally supported, cloud unverified and blocked.
+
+### Security, AWS and billing gates
+- **Never reproduce exposed temporary SSO role credentials** from earlier screenshots, write them to files, or use them for development. Owner must invalidate compromised role sessions according to official guidance; preserve non-root `enigma-deployer` SSO login and do not use root/IAM-user keys.
+- No Amplify app creation, connection of private GitHub to auto-build, CloudFormation/CloudWatch `PutDashboard`, IAM modifications, DynamoDB real-table tests, budget modifications or other AWS writes until explicit per-operation approval, region, resource manifest, credit expiration, estimated maximum charge risk and teardown are all reviewed.
+- The existing USD $20 monthly budget is notification-only; a previously reported remaining promotional credit balance is NOT current proof of usable credit or expiry. Treat both budget alert configuration and availability of free-tier offsets as independently verifiable.
+- Enigma's proprietary repo stays PRIVATE at `stokastisk-ai/enigma`. No forced pushes, broad `git add .`, secret-bearing artifacts, `.enigma-local`, credentials or model binaries in Git. Check for external auto-deploy triggers before even an otherwise authorized source push.
+
+### Decision classifications
+- `STATIC_EXPORT_SAFE` only with complete functional route/Auth/BFF proof.
+- `CUSTOM_AMPLIFY_COMPUTE_READY_FOR_CONTROLLED_TEST` only when local package, deployment spec and runtime smoke tests pass; still **not AWS-deployed**.
+- `BLOCKED_AMPLIFY_NEXT16` when official/custom compute issues remain; preserve alternate Lambda Web Adapter code for later owner choice.
+- Do not claim success without real URL and full authentication, Cognito, API, DynamoDB and Kaggle-to-AWS acceptance, all independently evidenced.
+
+## Section 23 — Enigma repository hygiene, Amplify 16 audit fixes and controlled cleanup (2026-11-23)
+
+**Scope:** Append this section once to the *current local* `skills.md`. Do not replace the user's existing instructions or disable earlier security, deployment and billing rules. For conflicts, the stricter no-AWS-write, no-local-GPU, secret-protection and owner-file preservation controls apply.
+
+### Non-negotiable state
+- Keep Python 3.13 at `/usr/local/bin/python3.13`, Next.js 16.4.6, private `stokastisk-ai/enigma`, AWS SSO profile `enigma-deployer` in `us-east-1`, Cognito/FastAPI/DynamoDB, and Kaggle-only Stokastisk build-5 / dual Tesla T4 inference. Never probe the laptop's NVIDIA 940M or execute AWS GPU services.
+- Latest **reported**, not independently rerun, assessment: `CUSTOM_AMPLIFY_COMPUTE_READY_FOR_CONTROLLED_TEST`; Git `1facf4b`; root `amplify.yml`, `scripts/build_amplify_bundle.mjs`, route matrix and governance tests changed locally **without commit/push**. Verify current HEAD and exact diff before proceeding.
+- Amplify managed SSR still documents Next.js 12–15, not 16. The custom `.amplify-hosting` artifact passed local validation only; no real AWS deployment or service compatibility is proven. Static export is not a drop-in replacement for authenticated SSR/BFF.
+
+### Mandatory safety for cleanup
+1. **Run read-only inventory first**: `/usr/local/bin/python3.13 scripts/enigma_cleanup_inventory.py --project "$PWD"`. Inspect `.enigma-local/cleanup-candidates.json` and actual `git status`, `git ls-files`, `git grep`, imports, README links, packaging and tests.
+2. Classify each candidate with evidence as KEEP, ARCHIVE_OUTSIDE_REPO, REMOVE_FROM_REPO or UNKNOWN. Provide exact paths, tracked/untracked status, references, replacement, restoration method and test impact.
+3. **Do not automatically delete candidates**. A candidate flagged by name is not proof of redundancy. Do not delete or relocate user-owned/untracked files without explicit owner instruction that identifies the category or paths; preserve locally until approved. Do not bulk `rm -rf`, `git clean -fdx`, `git reset --hard`, `git add .`, rewrite history, force push or remove unknown secrets using destructive methods.
+4. Preserve source, tests, `.gitignore`, present `skills.md` and `CLAUDE.md`, root `amplify.yml`, deployment docs, active builders, AWS manifests and templates, CloudWatch tools, offline connector, Kaggle notebook, and Lambda Web Adapter fallback pending live success and signed-off rollback. Never remove `.enigma-local` or local owner backups without explicit consent.
+5. Once deletion is separately approved: create a path-based rollback inventory, back up valuable owner files outside the repository with mode 0600/0700, stage *explicit* paths, run fresh tests, check diff, and commit only with permission. Never place private backups in Git.
+
+### Mandatory engineering corrections
+- The rate-limit test `test_rate_limit_returns_429_with_retry_after` is flaky with a real-clock token bucket (5/sec, burst 10, 15 requests); use fake/injected monotonic clock or deterministic transport/test fixture, preserving real production rate-limiter semantics and both in-memory/DynamoDB test coverage. Rerun full suite, not just the isolated test.
+- Review refresh-cookie `Path=/api` versus `proxy.ts` page gating. Prove correct behavior across access-token expiration, reload and subsequent refresh using secure, `httpOnly`, `SameSite`, `Secure` and path-scoped cookie tests. Do not widen cookie scope casually; prefer minimal, audited auth-flow repair that preserves CSRF and tenant isolation.
+- Verify that Amplify build artifact glob includes required hidden runtime files (`.env.production` if legitimately required), while never embedding build secrets or local `.env.local`/dev publishable keys. A runtime 503 on missing configuration is a safe failure, not a deployed success. Verify destination path against AWS artifact and monorepo specifications.
+- Recheck root `amplify.yml` `appRoot=apps/web`, working directory, `buildPath`, `baseDirectory`, and hosted build Node availability; compare the pure-Node bundler output with Python validator. Never assert cloud support from localhost equivalence.
+- Do not run any AWS writes (Amplify create/start, IAM permissions, Cognito/DynamoDB real table, budgets, CloudWatch dashboard, or teardown) without separate itemized and cost/credit/region approval. No Git push if it could trigger unapproved deployment.
+
+### Completion report
+Show source-linked cleanup decision table; exact diff and files retained; fresh `pytest`, typecheck, lint, Node, Playwright, local Amplify validation; any unresolved flake; auth-cookie and secrets evidence; Git commit status; and a separate list of approvals still needed. No claims of real AWS or Kaggle end-to-end acceptance without live evidence.
+
+## Section 24 — Enigma lean repository and non-destructive maintenance
+
+This section supplements prior instructions; preserve security, billing, authentication, deployment, and Kaggle-only inference constraints in the complete current skills.md.
+
+**Authority:** The owner requested a smaller, clean, reproducible Enigma repository, not unconditional deletion. All operations that discard or move user-owned content require explicit approval for the *exact file list*. Do not infer such approval from the existence of a cleanup prompt, audit, or script.
+
+**Environment:** `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/`, Python `/usr/local/bin/python3.13`, Next.js 16, AWS non-root profile `enigma-deployer`, Region `us-east-1`. AWS writes, deployments, spending, IAM changes, and local GPU access remain forbidden without separate authorization.
+
+**Required order:** (1) inspect fresh Git state and instructions, (2) measure sizes and nested cache footprint, (3) distinguish regenerable caches, dependencies, tracked source, owner notes, private files and artifacts, (4) run tests / clean-checkout validation, (5) produce a per-file or per-directory cleanup proposal with size, tracked status, references and rollback plan, (6) request explicit approval before deletion or archival.
+
+**Tools:** `scripts/enigma_disk_audit.py` is read-only. `scripts/enigma_cache_cleanup.py` is preview-only by default and deletes only allowlisted regenerable cache directories with an explicit execution phrase; do not run its execution mode without owner approval. Treat `node_modules` removal as higher-risk because package-manager reinstallation may take time/network access.
+
+**Protected material:** Keep `.git`, `skills.md`, `CLAUDE.md`, `.enigma-local`, `.env.local`, active Next.js/web/FastAPI/connector code, manifests, security documentation, deployment templates, tests, the Amplify bundle builder/validator, and Lambda Web Adapter fallback. Avoid revealing secrets, account IDs or credentials in reports, commits or console transcripts. Remove no backups until their unique content and recovery value have been assessed.
+
+**Deployment readiness:** Local Next.js 16 `.amplify-hosting` validation does not prove live AWS Amplify SSR support. Do not set `output: 'export'` for the current dynamic application merely to make static hosting work. Never call cloud deployment/write APIs without separate itemized approval and budget/credit verification.
+
+**Evidence:** Write `docs/ENIGMA_LEAN_MAINTENANCE_REPORT.md` with measured sizes, exact proposed removals, fresh tests, Git status, reversibility and outstanding blockers. Label synthetic tests, unverified claims and unpublished changes accurately.
+
+## Section 25 — Browser/CLI identity isolation, Amplify readiness, and conservative cleanup
+
+1. AWS access portal `EnigmaDeployer` console sessions and AWS CLI `enigma-deployer` profile are distinct from legacy IAM-user console sessions. Diagnose the actual principal before suggesting IAM changes. Prefer SSO Management Console sign-in, never copy access keys from the Get credentials screen.
+2. Run only explicit non-root SSO read-only AWS inspection absent separate owner approval. Never change IAM, budgets, CloudWatch dashboards, Amplify apps, CloudFormation, DynamoDB, Lambda or Cognito on behalf of a preflight.
+3. Never display or commit credential strings, session tokens, AWS account identifiers, identity email or private reports. Exposed temporary credentials require owner remediation.
+4. Preserve Next.js 16 dynamic/SSR architecture and its Cognito/FastAPI/DynamoDB/Kaggle flows. `output: 'export'` is forbidden on the current dynamic application. Treat `.amplify-hosting` custom bundle success as local evidence, not live provider acceptance. Retain Lambda Web Adapter fallback.
+5. For repository slimming, inventory exact file paths and references, test a clean build, identify Git tracking and backup hashes, and propose approval-separated cleanup phases. No deletion, moving, `git rm`, `git clean -fdx`, git push or commit without separate explicit authorization. Keep security notes, active source, tests, private data, and owner files. Never clean the parent `Waqas-Projects` directory.
+6. Default to CPU-only Python 3.13 and local safe regression tests; no GeForce 940M GPU probes and no AWS/Kaggle GPU inference initiated from local cleanup.
+7. The $20 monthly AWS Budget is an alert threshold and does not cap spend. Require credit expiration, an itemized resource manifest, explicit spending ceiling and teardown approval for a live Amplify test.
+
+## Section 26 — Enigma Railway migration and controlled legacy deployment retirement (2026-11-24)
+
+### Scope and source of truth
+- Repository: `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/`; web `apps/web`, API `apps/api`, connector `connector`, contracts `packages/contracts`.
+- Read the complete live `skills.md` and `CLAUDE.md` first. This addendum is subordinate to stricter security/owner instructions. Uploaded GitHub ZIPs may predate uncommitted local work and MUST NOT be used to overwrite the working tree.
+- Goal: one Railway project with separate Next.js 16/React 19 and FastAPI/Python 3.13 services, preserving authenticated BFF and long-running backend; optionally use AWS DynamoDB with explicitly approved credentials/charges. Keep Kaggle dual Tesla T4 the only LLM inference runtime.
+- User's Railway Hobby workspace has an included $5/month resource credit; it is not a spending cap. No service creation, deployment, database provisioning, paid resource usage, public DNS change, Git push, or cloud resource deletion without separate, explicit and itemized owner approval.
+
+### Non-negotiable safeguards
+1. Never initialize/query laptop NVIDIA GeForce 940M, install local CUDA/vLLM, invoke `nvidia-smi`, or create Railway/AWS GPU inference.
+2. Never display, export, commit, or upload credentials, session cookies, access tokens, private keys, actual account IDs, `.env.local`, `.aws/`, `.enigma-local/`, or reports with secrets. Do not copy raw provider credentials into files or prompt.
+3. No blanket `rm -rf`, `git clean -fdx`, `git reset --hard`, `git push`, deletion of branches/history, or automated changes to Vercel/AWS/Railway control planes without approval.
+4. Keep the current verified Clerk and Cognito paths until a single selected auth provider passes real end-to-end Railway tests. Preserve httpOnly cookie scope, CSRF, origin checks, redirect allow-lists, JWT validation, tenancy, limits, and fail-closed defaults. Do not enable development authentication in Railway or AWS production.
+5. Never remove Lambda Web Adapter, working `amplify.yml`, infra AWS SQL/DynamoDB implementation, Vercel configs, migration scripts, or rollback documentation until the Railway target passes the explicit rollback/retirement gate. A user request to 'delete deployments' does NOT authorize deletion of actual live resources, IAM roles, budgets, AWS account, GitHub history, or credentials.
+6. Preserve open-source Stokastisk SDK and GitHub Pages documentation in their independent repositories; do not consolidate or deploy GPU runtime in Enigma.
+
+### Work phases (mandatory order)
+**R0. Inventory and classification, read-only.** Capture repo branch/HEAD/status, tracked/untracked/ignored files, deployment-related references, current local authentication/worker protocols, package builds, Python requirements, database settings, secret names (names only), and active cloud inventories (only if credentials exist and read permission is granted). Explicitly mark resources as LIVE / LOCAL CONFIG ONLY / UNVERIFIED. Create `docs/RAILWAY_MIGRATION_INVENTORY.md` and per-file table: path, tracked?, referenced by?, action KEEP/CONVERT/ARCHIVE CANDIDATE, impact, backup verification. Do not delete yet.
+**R1. Architecture and cost gate.** Document HTTP BFF `apps/web/app/api/enigma/[...path]/route.ts` -> private FastAPI `api/v1/...`; public Kaggle connector -> authenticated HTTPS ingress; auth and CORS/Origin; persistent DB; migrations; health endpoints and metrics. Recommend railway web + railway api, with Railway Postgres as a conditional third service OR existing AWS DynamoDB if an approved table already exists. A memory store is NEVER a production database. Compare actual Railway per-minute cost estimates for two always-on services including RAM, CPU, traffic, optional DB, and fail under owner's spending ceiling. Add railway spend alerts/hard usage controls when available.
+**R2. Railway configuration, source-only.** Produce reviewed, minimal service configuration in `apps/web/railway.toml` and `apps/api/railway.toml` (or exact justified alternative), with `apps/web` and `apps/api` root directories, deterministic build/start, port binding `0.0.0.0:$PORT`, healthcheck, restart policy, supported Node version and Python 3.13. Since service root confines build context, verify whether `apps/web` imports `packages/contracts` from outside root. If so, retain repository-root build context and explicit Dockerfile/commands rather than breaking imports. Check whether Railpack supports pinned Python version before selecting explicit Dockerfile. Do not assume `npm start` starts standalone output or that Python dependencies from `requirements-aws.txt` work unchanged. No platform-specific AWS/Vercel environment tricks in production.
+**R3. Security and auth.** `ENIGMA_DEV_AUTH` off; no permissive wildcard CORS or raw secrets in `NEXT_PUBLIC_*`; secure httpOnly cookies; public `ENIGMA_PUBLIC_ORIGIN` and configured auth callback URLs; server-only API base to Railway private DNS/port; provision `ENIGMA_API_BASE` or actual app-defined variable only after checking `apps/web/lib/server/env.ts`; correct `X-Forwarded-*` trust; credentials verified server-side; no frontend direct DynamoDB or Kaggle access; protect all runtime/telemetry operations.
+**R4. Persistence.** For PostgreSQL, audit `PostgresStore` against `infra/aws/sql` and `supabase/migrations` and test migrations on disposable local PostgreSQL, without touching real production DB. Set `ENIGMA_STORE=postgres`, `ENIGMA_DB_DSN` only in Railway secrets; use environment-specific TLS settings and confirm internal DNS/port and no public DB exposure. For DynamoDB, verify `ENIGMA_STORE=dynamodb` / `ENIGMA_DDB_TABLE`, correct AWS credential provider for Railway (short-lived federation preferred; long-lived secrets only with explicit owner security approval), IAM least privilege, region, actual existing table, usage charges and moto parity. Do not provision any new AWS service without approval.
+**R5. Source and CPU-only validation.** Run Python 3.13 pytest with GPU-isolation, Node typecheck/lint/unit, production SSR build, Playwright mocks, auth and refresh-flow regression, package security audit, API/BFF contract tests, URL/origin/proxy regression, socket/port healthcheck, long-running API and reconnect tests, and secret scan. Test with app configured as railway production but no actual network/provider writes. Record reproducible commands and results.
+**R6. Deployment approval and controlled canary.** Present exact Railway project/service names, desired private/public domains, selected repo+branch, build and start commands, environment-variable NAMES, expected number of services/volumes, itemized cost model, limits, rollback, and verification matrix. STOP and request authorization for Railway writes. Upon approval alone, create a staging deployment, run smoke and signed-in E2E, verify Kaggle outbound HTTPS handshake and telemetry, database durability, uptime, metrics, cookies, and rollback.
+**R7. Legacy retirement gate.** Only after explicit owner approval AND verified Railway success: archive and propose deletion of specific AWS/Vercel deployment-only repository files. Do not automatically delete AWS IAM Identity Center, Cognito if still used, DynamoDB if still used, CloudWatch historical dashboards, budgets, or cloud account; cloud decommissioning is a separate authorized operation with export and rollback plan. Prefer removing old CI/deployment triggers first after verification; do not sever auth or data dependency. Stage exact file changes for review, and stop before commit/push unless approved.
+
+### Required outputs
+- `docs/RAILWAY_MIGRATION_INVENTORY.md`
+- `docs/RAILWAY_ARCHITECTURE_AND_COST.md`
+- `docs/RAILWAY_AUTH_DATABASE_CHECKLIST.md`
+- `docs/RAILWAY_SOURCE_VALIDATION.md`
+- `docs/LEGACY_AWS_VERCEL_RETIREMENT_PLAN.md`
+- Minimal Railway service configs / Dockerfiles only after inspection and tests
+- Terminal summary with unmodified original files, changed file paths, passing/failing/skipped tests, unknowns, exact proposed deletions, and separate approvals needed.
+
+### User-facing decision defaults
+- Default migration scope: railway web+api; existing Cognito/Clerk unchanged; no cloud AWS writes; PostgreSQL selected only after parity and cost approval; GitHub Pages and Stokastisk unchanged.
+- GitHub `stokastisk-ai/enigma` was public when checked 2026-11-24; do not assume privacy, recheck. Never commit secrets.
+- A healthy local build is NOT evidence of successful Railway deployment.
+
+## Section 27 — Enigma Railway deployment authority, safety gates, and rollback (2026-11-24)
+
+### Scope and source of truth
+- Project: `/media/waqasm86/External1/Waqas-Projects/Project-Enigma/`; Git origin must be `https://github.com/stokastisk-ai/enigma.git`; source of truth is the newest local worktree, not archived ZIPs or an old remote SHA.
+- Enigma = Next.js 16 web in `apps/web`, Python 3.13 FastAPI in `apps/api`, `packages/contracts`, and the Kaggle Stokastisk connector. Never initialize the local GeForce 940M, CUDA or a Railway/AWS GPU.
+- Maintain secure authentication and per-tenant isolation. Development bypasses must fail closed in hosted environments. Preserve Clerk/Cognito compatibility, cookie/CSRF protections and BFF route allowlists.
+- Keep AWS and Vercel artifacts until Railway passes documented end-to-end acceptance. AWS is optional only and has no standing deployment authorization.
+
+### Railway access model
+- User may authorize an Enigma-scoped Railway deployment, NOT account-wide authority. Obtain consent and only operate on the existing Railway Enigma project/environment and services, except expressly approved new API and database services in that same project.
+- Favor `railway login` or a **project-scoped** `RAILWAY_TOKEN`. Never demand/print/store workspace-wide `RAILWAY_API_TOKEN`, Railway tokens, AWS access keys, Clerk secrets, database passwords or Kaggle secrets. Never ask to paste them in prompts. Keep local Railway link metadata ignored.
+- Confirm linked project ID, environment, service, source repo, branch and the **actual** commit or uploaded source snapshot before any write. Never use `railway up --new`, `--yes` for implicit creation, or an unscoped deploy command. Check pending dashboard changes before applying.
+- Railway's old `railway.toml` / `railway.json` Config as Code is deprecated; do not create one as a shortcut. Do not run `railway config apply` because it may change or remove infrastructure. Prefer dashboard settings and verified Dockerfiles.
+
+### Build and runtime
+- Keep repo root as Docker **build context** because web imports `packages/contracts`; configure service Root Directory `/` or blank. Choose explicit `RAILWAY_DOCKERFILE_PATH=apps/web/Dockerfile` for web and `apps/api/Dockerfile` for API; verify current Railway UI semantics and official docs.
+- Source uses remote `main` only after reviewed migrations are committed and pushed. Local `railway up . --project <verified> --service <verified> --environment <verified>` can deploy unpublished code if the service is configured for the right context. Confirm upload includes Dockerfiles, lockfiles, contracts and Python requirements; don't upload `.env.local`, `.aws`, caches, secrets or private reports.
+- Don't set a custom start command if the Dockerfiles have a correct CMD/ENTRYPOINT; test binding to `0.0.0.0:$PORT`. Expose frontend via Railway-generated HTTPS domain and FastAPI via separately authenticated HTTPS endpoint for Kaggle; use Railway private networking for web BFF to API where appropriate. Browser must not receive private DNS or server-only secrets.
+- Host production gates must reject development auth. Validate origin/host trust behind TLS proxy, cookies, redirects, CSRF, tenant scoping, request limits, connector replay, offline states and telemetry provenance. Database persistence must survive restarts. No persistent in-memory production store.
+- PostgreSQL deployment needs separately approved database provisioning, schema bootstrap and non-superuser runtime role; verify TLS and backups. If AWS DynamoDB retained instead, use least-privilege workload credentials, not user's interactive SSO session. A real public Kaggle connector must authenticate outbound to API; do not run Kaggle or GPUs without user launching it.
+
+### Spending, rollback and boundaries
+- Before first deployment, inspect Railway Hobby usage limits and set a conservative service spending/usage cap supported by the current plan. The $5 monthly subscription and $5 included usage are **not** a hard cap. Do not assume high vCPU/RAM plan allowances are provisioned resources. Start at 1 replica, modest CPU/RAM limits, no cron/paid volumes/DB without approval. Only choose Serverless/app sleep after checking connector polling and cold starts; it may not work if services continually poll.
+- Allowed after explicit Enigma deployment approval: configuring the existing service, adding one web/API service in the existing project if necessary, assigning an HTTPS domain, setting scoped variables in Railway UI or via approved CLI, and performing a controlled Railway deployment/rollback. Require explicit additional approval to create Postgres or any other billable persistent resource or to affect other projects.
+- Never perform AWS resource writes, change IAM/budgets, remove AWS/Vercel, change GitHub visibility, force push, delete live services/databases/volumes, or automatically push source. A Railway deployment approval is not permission for these actions.
+- Require before deploy: signed-off project/environment/service IDs, exact manifest and config, validated secrets location (names only in reports), usage cap, build context, Dockerfile path, local tests, rollback target, and named acknowledgement of possible Railway charges.
+- Validate health and readiness separately. Keep build/deploy logs sanitized, record deployment ID, test public routes and protected routes, and stop/rollback on authentication, data integrity, or cost anomalies.
+- Archive obsolete deployment files only after Railway end-to-end tests and separately approved exact file list; preserve Git history and backup strategy.
+
+### Expected output
+- A deployment preflight report, service inventory, env-variable names-only matrix, local regression results, deployment or blocked status, exact costs/limits observed, public URL if successfully deployed, rollback instructions and outstanding integrations. Never claim success without a healthy deploy and HTTP evidence.
+
+## Section 28 — Enigma production state on Railway, real Cognito, and permanent cleanup (2026-11-24)
+
+**Precedence:** latest applicable section. It supplements §26–27 and supersedes any earlier text that describes Vercel, AWS Amplify, Lambda or CloudFront hosting, a placeholder Cognito pool, or the retired cleanup/migration prompts. Stricter privacy, GPU, secret and spending rules of earlier sections still apply.
+
+### Current architecture (verified live 2026-11-24)
+- Railway project `blissful-solace`, environment `production`: web `Enigma` (Next.js 16, Dockerfile `apps/web/Dockerfile`), `enigma-api` (FastAPI Python 3.13, `apps/api/Dockerfile`), `Postgres` (PostgreSQL 18, private network only). Both app services are GitHub-connected to `stokastisk-ai/enigma` `main`, repo-root build context, Serverless on, one replica, per-service watch paths. Railway cannot enforce a $5 total: Hobby bills max($5, usage); the workspace usage limit is soft $5 / hard $10.
+- Identity: Amazon Cognito user pool `enigma-prod` (`us-east-1`, Essentials tier, email username, no MFA/SMS/SES, deletion protection on) with one public app client `enigma-web` (no secret; USER_PASSWORD_AUTH + refresh; token revocation). Created with the owner's explicit approval on 2026-11-24. Clerk and Supabase code remain as optional, unused providers.
+- Database: the portable schema in `infra/aws/sql`, applied by `python -m enigma_api.bootstrap` (Railway pre-deploy; needs `ENIGMA_DB_ADMIN_DSN` only while bootstrapping, then delete it). The API connects as a NOSUPERUSER NOBYPASSRLS role over `sslmode=require`.
+- Retention: `.github/workflows/retention.yml` (daily) calls `GET /api/v1/admin/prune` with `ENIGMA_CRON_SECRET`; there is no background worker anywhere, so web and API can sleep.
+- Kaggle 2×T4 remains the only inference runtime. Mock connector runs are always labelled MOCK and never count as GPU evidence.
+
+### Removed (do not recreate)
+Vercel (`vercel.json`, `index.py`, starter SVGs, `VERCEL` guards), AWS Amplify (`amplify.yml`, bundle builders/validators), Lambda (`lambda_handler.py`, `requirements-aws.txt`), CloudFormation hosting templates, CloudWatch dashboard generators, AWS cost/teardown scripts, historical Claude prompts, section fragments, backups, generated reports, build outputs. Kept: Cognito code, the DynamoDB adapter and its two templates, the dormant AWS Ops admin page (`ENIGMA_AWS_OPS=off`; removal candidate), the read-only budget audit, IAM policy drafts, SQL.
+
+### Standing rules learned
+1. The GitHub repository is public until the owner changes it: commit only code, tests, Dockerfiles and public-safe docs; keep `skills.md`, `CLAUDE.md`, `docs/` internals and `.enigma-local/` out of Git.
+2. Verify a commit by exporting the exact index to a clean directory and testing there.
+3. Use the environment-patch API/dashboard for Railway configuration; never `railway.toml`, `railway config apply`, or `railway up .` from the repo root. Variables that hold secrets are set through stdin or reference variables, never printed.
+4. AWS only via `aws sso login --profile enigma-deployer`; verify the `AWSReservedSSO_EnigmaDeployer` assumed role first; creating billable AWS resources needs separate approval.
+
+## Section 29 — Neon-only authentication and storage; AWS/Supabase/Clerk/Cognito retired (2026-11-25)
+
+Supersedes every AWS, Cognito, Clerk, Supabase, DynamoDB and Vercel policy in sections 1–28 for the application. Architecture: Railway (`enigma-web` Next.js 16, `enigma-api` FastAPI/Python 3.13, Dockerfile builds from the repository root, Serverless) + Neon PostgreSQL (project `enigma-neon`, branch `production`, db `neondb`, aws-us-east-2) + Neon Managed Better Auth. GPU inference stays on the user's Kaggle 2×T4; nothing GPU, CUDA, torch or vLLM ever goes into a Railway image.
+- Code: `ENIGMA_AUTH_PROVIDER=neon` is the only accepted value; the API refuses production start without `NEON_AUTH_BASE_URL` (https), `ENIGMA_STORE=postgres`, a `sslmode=verify-full` DSN, `CRON_SECRET`, and verified-email enforcement. Dev HS256 auth remains local-only and is refused on Railway.
+- Schema: `db/migrations/*.sql` (portable, no RLS; authorization is the API plus the SQL functions). Never run DDL against `neon_auth`. Use the direct endpoint for the app (the pooled endpoint rejects the store's startup `options`) and a separate admin DSN only for bootstrap.
+- Never delete the stopped Railway `Postgres` service/volume, Neon data, or AWS/Vercel/Supabase accounts without explicit owner approval. Repository is PUBLIC: do not commit CLAUDE.md, skills.md, internal docs, IDs or credentials.
+- Do not claim `DEPLOYED_AND_VERIFIED` until real sign-up/verify/sign-in, tenant isolation, wake-from-sleep and a Kaggle-connector claim have been run against production.
