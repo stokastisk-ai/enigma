@@ -45,3 +45,46 @@ def test_tp1_is_default_and_tp2_is_a_separate_labelled_unverified_experiment():
 
 def test_no_hosted_model_or_aws_gpu_path():
     assert not re.search(r"bedrock|sagemaker|openai\.com|anthropic\.com|boto3", CODE, re.I)
+
+
+# ---- staged diagnostic cells (docs/kaggle/enigma_connector_diagnostic_cells.md): they are copy-pasted into a notebook, so they must at least parse and stay in sync
+
+
+def _cells_text() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "docs" / "kaggle" / "enigma_connector_diagnostic_cells.md").read_text()
+
+
+def test_diagnostic_cells_all_compile_and_reference_only_real_stages_and_helpers():
+    import ast
+    from enigma_connector import stage_runner
+    from enigma_connector.cli import OFFLINE_STAGES, STAGES
+    text = _cells_text()
+    blocks = re.findall(r"```python\n(.*?)```", text, flags=re.S)
+    assert len(blocks) >= 10
+    for b in blocks:
+        ast.parse(b)                                                           # a typo here would be found on a Kaggle GPU session otherwise
+    stages = set(re.findall(r'stage\("([a-z-]+)"', text))
+    assert stages and stages <= {*STAGES, *OFFLINE_STAGES}, stages - {*STAGES, *OFFLINE_STAGES}
+    assert {"nvml", "vllm", "register", "heartbeat", "jobs", "upload-once", "telemetry", "full"} <= stages
+    assert hasattr(stage_runner, "run_stage")
+
+
+def test_diagnostic_cells_contain_no_credentials_and_pass_the_key_only_through_a_getter():
+    text = _cells_text()
+    assert not re.search(r"enig_rt_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}", text)
+    assert 'UserSecretsClient().get_secret("ENIGMA_RUNTIME_TOKEN")' in text and "token_getter" in text
+    assert not re.search(r"print\([^)]*(token|ENIGMA_RUNTIME_TOKEN)", text, re.I)
+    assert "--token" not in text, "the key must never be a command-line argument"
+
+
+def test_diagnostic_cells_pin_a_revision_that_contains_the_stage_runner():
+    import subprocess
+    from pathlib import Path
+    rev = re.search(r'REV = "([0-9a-f]{7,40})"', _cells_text()).group(1)
+    root = Path(__file__).resolve().parents[1]
+    if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{rev}^{{commit}}"], capture_output=True).returncode != 0:
+        import pytest
+        pytest.skip(f"revision {rev} is not in this clone's history (shallow CI checkout); verified on full clones")
+    r = subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{rev}:connector/enigma_connector/stage_runner.py"], capture_output=True)
+    assert r.returncode == 0, f"revision {rev} does not contain connector/enigma_connector/stage_runner.py (push it, or update REV)"
