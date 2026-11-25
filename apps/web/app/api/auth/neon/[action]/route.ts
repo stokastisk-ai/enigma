@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   if (!auth) return fail(503, "auth_unavailable", "authentication is not available");
 
   // Account-level limits (keyed by the e-mail STRING, so they behave identically whether or not an account exists).
-  const acct = h(b.email);
+  const acct = h(b.email ?? ""); // sign-out has no e-mail: hashing `undefined` threw a TypeError (500) before the SDK ever ran
   if (action === "sign-in" || action === "verify") {
     const a = hit(`neon:acct:${action}:${acct}`, action === "verify" ? 6 : 8, 15 * 60_000);
     if (!a.allowed) return fail(429, "rate_limited", "Too many attempts. Try again later.", {}, { "retry-after": String(a.retryAfterS) });
