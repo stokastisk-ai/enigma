@@ -23,8 +23,17 @@ def test_token_comes_from_kaggle_secrets_and_is_never_printed_or_hardcoded():
     assert not re.search(r"print\([^)]*ENIGMA_RUNTIME_TOKEN", CODE)
 
 
-def test_api_url_is_a_placeholder_not_a_real_host():
-    assert "https://YOUR-ENIGMA-API-HOST" in CODE and "amazonaws.com" not in CODE
+def test_api_url_is_the_public_railway_https_endpoint_with_no_credentials():
+    import re as _re
+    m = _re.search(r'ENIGMA_API_URL"\] = "(https://[^"]+)"', CODE)
+    assert m, "the notebook must set an https ENIGMA_API_URL"
+    assert m.group(1).endswith(".up.railway.app") and "@" not in m.group(1) and "?" not in m.group(1)
+    assert "amazonaws.com" not in CODE and "vercel" not in CODE.lower()
+
+
+def test_preflight_waits_for_the_sleeping_api_with_bounded_read_only_retries():
+    assert "/api/v1/health" in CODE and "range(1, 7)" in CODE and "urlopen" in CODE
+    assert "Never retries anything that writes" in CODE
 
 
 def test_tp1_is_default_and_tp2_is_a_separate_labelled_unverified_experiment():

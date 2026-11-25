@@ -1,6 +1,6 @@
 import { ConsoleShell } from "@/components/enigma/console-shell";
 import { NeonSignOut } from "@/components/enigma/neon-auth";
-import { devAuthAllowed } from "@/lib/server/env";
+import { devAuthAllowed, publicApiUrl } from "@/lib/server/env";
 import { neonAuthEnabled } from "@/lib/server/neon-auth";
 import { requirePageSession } from "@/lib/server/page-guard";
 
@@ -8,7 +8,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   await requirePageSession(); // resource-level check; proxy.ts is only the first line of defence
   const neon = neonAuthEnabled();
   return (
-    <ConsoleShell devAuth={!neon && devAuthAllowed()} authSlot={neon ? <NeonSignOut /> : null}>
+    <ConsoleShell publicApiUrl={publicApiUrl()} devAuth={!neon && devAuthAllowed()} authSlot={neon ? <NeonSignOut /> : null}>
       {children}
     </ConsoleShell>
   );

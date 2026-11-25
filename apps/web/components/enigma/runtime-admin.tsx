@@ -18,8 +18,10 @@ const when = (s: string | null, utc: boolean) => (s ? new Date(s).toLocaleString
 
 export function TokenReveal({ token, mock, onClose }: { token: RuntimeToken | null; mock: boolean; onClose: () => void }) {
   const [shown, setShown] = useState(false);
-  const url = typeof location !== "undefined" ? location.origin : "https://YOUR-ENIGMA-DOMAIN";
-  const snippet = `# Kaggle notebook: store the key as a Kaggle Secret named ENIGMA_RUNTIME_TOKEN, never paste it into a cell.\nimport os\nos.environ["ENIGMA_API_URL"] = "${url.replace(/\/$/, "")}"   # your Enigma API base URL\nos.environ["ENIGMA_MODE"] = "${mock ? "mock" : "stokastisk"}"`;
+  // The connector calls FastAPI (/api/v1/...) directly, NOT this web app, so the browser origin would be wrong. The API origin is configured on the server.
+  const c = useConsole();
+  const url = c.publicApiUrl || "https://YOUR-ENIGMA-API-HOST";
+  const snippet = `# Kaggle notebook: store the key as a Kaggle Secret named ENIGMA_RUNTIME_TOKEN, never paste it into a cell.\nimport os\nos.environ["ENIGMA_API_URL"] = "${url.replace(/\/$/, "")}"   # your Enigma API base URL (the FastAPI service, not this web app)\nos.environ["ENIGMA_MODE"] = "${mock ? "mock" : "stokastisk"}"`;
   return (
     <Dialog open={!!token} onOpenChange={(o) => { if (!o) { setShown(false); onClose(); } }}>
       <DialogContent data-testid="token-dialog">

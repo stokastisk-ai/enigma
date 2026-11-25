@@ -36,9 +36,9 @@ function Gate({ children }: { children: React.ReactNode }) {
   return <>{c.runtimesError ? <div className="px-4 pt-4"><StaleBanner updatedAt={c.runtimesUpdatedAt} error={c.runtimesError} /></div> : null}{children}</>;
 }
 
-export function ConsoleShell({ children, authSlot, devAuth }: { children: React.ReactNode; authSlot?: React.ReactNode; devAuth: boolean }) {
+export function ConsoleShell({ children, authSlot, devAuth, publicApiUrl }: { children: React.ReactNode; authSlot?: React.ReactNode; devAuth: boolean; publicApiUrl: string }) {
   return (
-    <ConsoleProvider>
+    <ConsoleProvider publicApiUrl={publicApiUrl}>
       <SidebarProvider>
         <AppSidebar authSlot={authSlot} />
         <SidebarInset>

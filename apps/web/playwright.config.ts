@@ -37,7 +37,7 @@ export default defineConfig({
       url: WEB,
       reuseExistingServer: false,
       // Neon Auth is blanked so a local .env.local can never switch the mock suite into real-auth mode.
-      env: { ENIGMA_API_URL: API, ENIGMA_DEV_AUTH: "1", ENIGMA_DEV_JWT_SECRET: SECRET, ENIGMA_DIST_DIR: ".next-e2e", ENIGMA_NEON_AUTH: "" },
+      env: { ENIGMA_API_URL: API, ENIGMA_PUBLIC_API_URL: API, ENIGMA_DEV_AUTH: "1", ENIGMA_DEV_JWT_SECRET: SECRET, ENIGMA_DIST_DIR: ".next-e2e", ENIGMA_NEON_AUTH: "" },
     },
   ],
 });

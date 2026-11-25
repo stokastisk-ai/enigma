@@ -17,6 +17,8 @@ type Ctx = {
   canAdmin: boolean; canWrite: boolean;
   /** Enigma platform administrator (ENIGMA_ADMIN_SUBJECTS). Informational only; the BACKEND is the real gate. */
   isAdmin: boolean;
+  /** Public origin of the FastAPI service for GPU-host connectors (server-provided at runtime; "" when not configured). */
+  publicApiUrl: string;
 };
 const C = createContext<Ctx | null>(null);
 export const useConsole = () => { const v = useContext(C); if (!v) throw new Error("useConsole outside provider"); return v; };
@@ -26,7 +28,7 @@ const store = {
   set: (k: string, v: string | null) => { try { if (v === null) window.localStorage.removeItem(k); else window.localStorage.setItem(k, v); } catch { /* storage unavailable: selections just won't persist */ } },
 };
 
-export function ConsoleProvider({ children }: { children: React.ReactNode }) {
+export function ConsoleProvider({ children, publicApiUrl }: { children: React.ReactNode; publicApiUrl: string }) {
   const [wsId, setWsId] = useState<string | null>(null);
   const [projId, setProjId] = useState<string | null>(null);
   const [rtId, setRtId] = useState<string | null>(null);
@@ -66,6 +68,7 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
     loading: !booted || wsPoll.loading || (!!workspace && projPoll.loading), error: wsPoll.error ?? projPoll.error,
     canAdmin: workspace?.role === "owner" || workspace?.role === "admin", canWrite: workspace?.role !== "viewer" && !!workspace,
     isAdmin: mePoll.data?.is_admin === true,
+    publicApiUrl,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

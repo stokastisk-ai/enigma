@@ -48,3 +48,15 @@ test("minted tokens are cached briefly, never past their own expiry, and keyed b
   cachePut(sessionKey("user-4:c"), "not-a-jwt", now);                  // unparseable token: not cached
   assert.equal(cacheGet(sessionKey("user-4:c"), now), null);
 });
+
+test("isUpstreamFailure separates a not-ready Neon Auth from a real 'no session' answer", async () => {
+  const { isUpstreamFailure } = await import("./neon-auth.ts");
+  assert.equal(isUpstreamFailure(null), false);
+  assert.equal(isUpstreamFailure(undefined), false);
+  assert.equal(isUpstreamFailure({ status: 401 }), false, "an invalid session is final");
+  assert.equal(isUpstreamFailure({ status: 403 }), false);
+  assert.equal(isUpstreamFailure({ status: 422 }), false);
+  assert.equal(isUpstreamFailure({ status: 500 }), true);
+  assert.equal(isUpstreamFailure({ status: 503 }), true);
+  assert.equal(isUpstreamFailure({ message: "fetch failed" }), true, "no HTTP status means the call never completed");
+});

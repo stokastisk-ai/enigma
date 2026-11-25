@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { withRetries } from "./retry.ts";
 
 /**
  * Neon Managed Better Auth (server only). The only production auth provider. Nothing here runs unless ENIGMA_NEON_AUTH=on and both
@@ -114,13 +115,20 @@ export const cacheClearForTests = cacheClearAll;
 export type NeonUser = { id: string; email: string; name: string; emailVerified: boolean };
 export type NeonSessionInfo = { user: NeonUser; token: string };
 
+/** True when an SDK error means "Neon Auth (or its database) is not ready / unreachable", as opposed to "no such session" (401) or a rejected request (4xx). */
+export const isUpstreamFailure = (e: SdkError | undefined): boolean => Boolean(e) && (e!.status === undefined || e!.status >= 500);
+
+// Neon Auth is backed by the same serverless Postgres: after it scales to zero its first answer can be a 5xx. Reads are retried briefly instead of being
+// mistaken for "signed out". Only read-only SDK calls are retried here; a genuine 401 / absent session is never retried.
+const READ_RETRY = { attempts: 3, delaysMs: [400, 1000] } as const;
+
 /** Current Neon session -> user + a server-minted JWT, or null (no/invalid session, unverified e-mail, any upstream failure: fail closed). */
 export async function neonSession(cookieNames: string[], cookieValueFor: (name: string) => string | undefined): Promise<NeonSessionInfo | null> {
   if (!hasNeonCookie(cookieNames)) return null;
   const auth = await getNeonAuth();
   if (!auth) return null;
   try {
-    const { data: s } = await auth.getSession();
+    const { data: s } = await withRetries(() => auth.getSession(), (r) => isUpstreamFailure(r.error), READ_RETRY);
     const u = s?.user;
     if (!u?.id || typeof u.id !== "string") return null;
     if (neonRequireVerified() && u.emailVerified !== true) return null;
@@ -128,7 +136,7 @@ export async function neonSession(cookieNames: string[], cookieValueFor: (name: 
     const key = sessionKey(`${u.id}:${tokenCookie ? (cookieValueFor(tokenCookie) ?? "") : ""}`);
     let token = cacheGet(key);
     if (!token) {
-      const t = await auth.token();
+      const t = await withRetries(() => auth.token(), (r) => isUpstreamFailure(r.error), READ_RETRY);
       token = t?.data?.token ?? null;
       if (!token) return null;
       cachePut(key, token);

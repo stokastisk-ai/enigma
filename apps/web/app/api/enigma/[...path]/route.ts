@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiBase, devAuthAllowed } from "@/lib/server/env";
 import { sameOrigin } from "@/lib/server/origin";
+import { isTransientStatus, withRetries } from "@/lib/server/retry";
 import { getSession } from "@/lib/server/session";
 import { ConversationCreate, ProjectCreate, RuntimeCreate, SubmitJob, WorkspaceCreate } from "@/lib/contracts";
 
@@ -84,9 +85,16 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     if (body !== undefined) headers["content-type"] = "application/json";
   }
 
+  // Railway Serverless: the first request after a quiet period can reach the API while it is still waking (connection refused / 502-504). Reads, and writes that carry
+  // an Idempotency-Key (the API de-duplicates them), are retried a few times; every other write is attempted exactly once because it may already have happened.
+  const safeToRetry = method === "GET" || (method === "POST" && rule.idempotent === true);
   let upstream: Response;
   try {
-    upstream = await fetch(`${base}/api/v1/app/${joined}${qs.size ? `?${qs}` : ""}`, { method, headers, body, signal: AbortSignal.timeout(20_000), cache: "no-store" });
+    upstream = await withRetries(
+      () => fetch(`${base}/api/v1/app/${joined}${qs.size ? `?${qs}` : ""}`, { method, headers, body, signal: AbortSignal.timeout(15_000), cache: "no-store" }),
+      (r) => isTransientStatus(r.status),
+      { attempts: safeToRetry ? 4 : 1, delaysMs: [500, 1000, 2000] },
+    );
   } catch {
     return err(502, "upstream_unreachable", "the Enigma API is unreachable");
   }
