@@ -77,6 +77,6 @@ def test_off_railway_development_still_boots(monkeypatch):
 
 def test_railway_postgres_production_config_validates(monkeypatch):
     monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
-    s = Settings(env="production", store="postgres", db_dsn="postgresql://u@h:5432/d?sslmode=require", auth_provider="cognito",
-                 cognito_region="us-east-1", cognito_user_pool_id="us-east-1_ABC", cognito_app_client_id="cid", cron_secret="c" * 32)
+    s = Settings(env="production", store="postgres", db_dsn="postgresql://u@h:5432/d?sslmode=verify-full",
+                 neon_auth_base_url="https://ep-x.neonauth.us-east-2.aws.neon.tech/neondb/auth", cron_secret="c" * 32)
     assert s.validate_for_startup() == []

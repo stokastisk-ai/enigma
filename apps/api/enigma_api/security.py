@@ -2,8 +2,7 @@
 
 * Runtime plane: ``Authorization: Bearer enig_rt_<8-char prefix>_<secret>``. Only sha256(secret) is stored.
   A token resolves to exactly one runtime (and therefore one workspace + project); nothing in a request body can widen that.
-* User plane: a Clerk session JWT (RS256, verified against the Clerk JWKS, issuer and authorized-party checked), a Cognito RS256 JWT, or a Neon
-  Managed Better Auth JWT (EdDSA, JWKS of the Auth URL, issuer and audience = its origin). The algorithm selects the verifier, so providers coexist.
+* User plane: a Neon Managed Better Auth JWT (EdDSA, JWKS of the Auth URL, issuer and audience = its origin). Every other algorithm is refused.
   A dev-only HS256 mode exists for the local mock E2E; Settings.validate_for_startup() forbids it in production / on Railway.
 """
 from __future__ import annotations
@@ -87,8 +86,8 @@ def verify_runtime_token(store: Any, token: str, now: datetime | None = None) ->
 # ---------------------------------------------------------------- user tokens
 @dataclass(frozen=True)
 class UserIdentity:
-    user_id: str          # provider-namespaced subject: Clerk `sub` as-is (historical), Cognito `cognito:<sub>`, Neon `neon:<sub>`; never equal across providers
-    auth: str             # "clerk" | "cognito" | "neon" | "dev"
+    user_id: str          # namespaced subject: Neon `neon:<sub>`; dev tokens use their own `sub`
+    auth: str             # "neon" | "dev"
 
 
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
@@ -99,26 +98,24 @@ _SUBJECT = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 def _valid_subject(sub: Any) -> str:
     """A verified token must still carry a usable subject. An empty/odd `sub` would collapse every such user into one identity (and so one tenant);
-    ':' is excluded so a token can never forge the `cognito:` namespace prefix. Cognito subs are UUIDs, which this accepts."""
+    ':' is excluded so a token can never forge the `neon:` namespace prefix. Neon subs are UUIDs, which this accepts."""
     if not isinstance(sub, str) or not _SUBJECT.fullmatch(sub):
         raise ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
     return sub
 
 
 class JwksCache:
-    """Cognito signing keys with safe rotation.
+    """Neon Auth signing keys with safe rotation.
 
-    * Normal mode: keys are fetched from the pool's own public JWKS URL (HTTPS, short timeout) on first use, then cached.
+    * Normal mode: keys are fetched from the Auth URL's public JWKS endpoint (HTTPS, short timeout) on first use, then cached.
     * An unknown ``kid`` triggers ONE refresh attempt, throttled to once per ``min_refresh_s`` (a flood of forged ``kid`` values cannot hammer
-      the JWKS endpoint or add latency to every request). Cognito's published key set replaces the cache, so a key Cognito retired is dropped
+      the JWKS endpoint or add latency to every request). The published key set replaces the cache, so a key Neon retired is dropped
       at the next successful refresh (a known ``kid`` also triggers a refresh once the cache is older than ``ttl_s``).
-    * Optional pinned seed (``COGNITO_JWKS_JSON``) lets a VPC Lambda with no outbound network verify tokens offline. If the network is reachable it
-      is replaced by the fetched set; if not, the pinned keys stay and an unknown ``kid`` is refused (fail closed) until the operator updates them.
     * A failed refresh never widens trust: existing keys are kept, unknown kids still fail.
     Not a secret: JWKS documents contain public keys only.
     """
 
-    def __init__(self, url: str, pinned_json: str = "", fetch: Callable[[str], dict] | None = None, clock: Callable[[], float] | None = None,
+    def __init__(self, url: str, fetch: Callable[[str], dict] | None = None, clock: Callable[[], float] | None = None,
                  min_refresh_s: float = 300.0, ttl_s: float = 3600.0):
         import time as _t
         self.url, self._fetch, self._clock = url, fetch or self._default_fetch, clock or _t.monotonic
@@ -127,9 +124,6 @@ class JwksCache:
         self._last_attempt: float | None = None
         self._last_success: float | None = None
         self.fetches = 0                                                  # observable for tests / diagnostics
-        if pinned_json:
-            import json
-            self._load(json.loads(pinned_json))
 
     @staticmethod
     def _default_fetch(url: str) -> dict:
@@ -171,15 +165,13 @@ class UserVerifier:
                  clock: Callable[[], float] | None = None):
         self.s = settings
         self._resolver = key_resolver
-        self._jwk_client: jwt.PyJWKClient | None = None
         self._jwks_fetch, self._clock = jwks_fetch, clock
-        self._cognito_keys: JwksCache | None = None
         self._neon_keys: JwksCache | None = None
 
     def _verify_neon(self, token: str) -> "UserIdentity":
         """Neon Managed Better Auth JWT: EdDSA (Ed25519), 15-minute expiry. `iss` AND `aud` must equal the origin of the configured Auth URL, so a token from
         any other Neon project/branch is refused. A banned account, or (by default) an account whose e-mail is not verified, is refused. The `sub` is
-        namespaced as `neon:<sub>` so it can never equal, and is never merged with, a Cognito identity (no e-mail based linking)."""
+        namespaced as `neon:<sub>` so it cannot collide with a dev identity (no e-mail based linking)."""
         unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
         s = self.s
         origin = s.neon_origin
@@ -189,7 +181,7 @@ class UserVerifier:
             key = self._resolver(token)
         else:
             if self._neon_keys is None:
-                self._neon_keys = JwksCache(s.neon_jwks_url, "", self._jwks_fetch, self._clock)
+                self._neon_keys = JwksCache(s.neon_jwks_url, self._jwks_fetch, self._clock)
             key = self._neon_keys.key_for(jwt.get_unverified_header(token).get("kid"))
         claims = jwt.decode(token, key, algorithms=["EdDSA"], issuer=origin, audience=origin,
                             options={"require": ["exp", "iat", "sub", "iss", "aud"]})
@@ -198,38 +190,6 @@ class UserVerifier:
         if s.neon_require_verified_email and claims.get("emailVerified") is not True:
             raise unauthorized
         return UserIdentity(f"neon:{_valid_subject(claims['sub'])}", "neon")
-
-    def _verify_cognito(self, token: str) -> "UserIdentity":
-        """Cognito user-pool JWT: RS256, issuer pinned to the pool, expiry, ``token_use`` and app-client binding all enforced.
-
-        access tokens carry ``client_id`` (no ``aud``); id tokens carry ``aud`` (= client id). Either way the client id must be ours,
-        so a token minted for another app client or pool is refused.
-        """
-        unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
-        s = self.s
-        if not (s.cognito_issuer and s.cognito_app_client_id):
-            raise unauthorized
-        if self._resolver:
-            key = self._resolver(token)
-        else:
-            if self._cognito_keys is None:
-                self._cognito_keys = JwksCache(s.cognito_jwks_url, s.cognito_jwks_json, self._jwks_fetch, self._clock)
-            key = self._cognito_keys.key_for(jwt.get_unverified_header(token).get("kid"))
-        claims = jwt.decode(token, key, algorithms=["RS256"], issuer=s.cognito_issuer,
-                            options={"require": ["exp", "iat", "sub", "iss"], "verify_aud": False})
-        if claims.get("token_use") != s.cognito_token_use:
-            raise unauthorized
-        client = claims.get("aud") if s.cognito_token_use == "id" else claims.get("client_id")
-        if client != s.cognito_app_client_id:
-            raise unauthorized
-        return UserIdentity(f"cognito:{_valid_subject(claims['sub'])}", "cognito")
-
-    def _signing_key(self, token: str) -> Any:
-        if self._resolver:
-            return self._resolver(token)
-        if not self._jwk_client:
-            self._jwk_client = jwt.PyJWKClient(self.s.clerk_jwks_url, cache_keys=True, lifespan=3600, timeout=5)
-        return self._jwk_client.get_signing_key_from_jwt(token).key
 
     def verify(self, token: str) -> UserIdentity:
         unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
@@ -248,20 +208,7 @@ class UserVerifier:
                 return UserIdentity(str(claims["sub"]), "dev")
             if alg == "EdDSA":
                 return self._verify_neon(token)
-            if alg != "RS256":
-                raise unauthorized
-            if self.s.auth_provider == "cognito":
-                return self._verify_cognito(token)
-            if not self.s.clerk_issuer and not self._resolver:
-                raise unauthorized
-            claims = jwt.decode(token, self._signing_key(token), algorithms=["RS256"], issuer=self.s.clerk_issuer or None,
-                                options={"require": ["exp", "sub", "iat"], "verify_aud": False})
-            azp_allowed = [a.strip() for a in self.s.clerk_authorized_parties.split(",") if a.strip()]
-            if azp_allowed and claims.get("azp") not in azp_allowed:
-                raise unauthorized
-            if claims.get("sts") == "pending":            # Clerk: session still has pending tasks
-                raise unauthorized
-            return UserIdentity(_valid_subject(claims["sub"]), "clerk")
+            raise unauthorized
         except ApiError:
             raise
         except (jwt.PyJWTError, KeyError, OSError, TypeError, ValueError):   # TypeError/ValueError: key-type mismatch or malformed JWK must be a 401, never a 500

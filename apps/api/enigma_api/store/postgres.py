@@ -1,4 +1,4 @@
-"""PostgreSQL store (AWS RDS / any vanilla PostgreSQL 14+) using psycopg 3 and the portable schema in infra/aws/sql/.
+"""PostgreSQL store (Neon / any vanilla PostgreSQL 14+) using psycopg 3 and the portable schema in db/migrations/.
 
 Security model: the API connects as a LOGIN role that is a member of ``enigma_app`` (least privilege, no RLS bypass needed because no RLS
 exists in the portable schema). Authorisation is done by the FastAPI layer before any call; the SQL functions then re-check tenant /
@@ -22,7 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .base import Row, Store
-from .supabase import StoreUnavailable      # same 503 mapping in the routes
+from .base import StoreUnavailable      # same 503 mapping in the routes
 
 log = logging.getLogger("enigma.postgres")
 

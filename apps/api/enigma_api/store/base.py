@@ -110,3 +110,7 @@ class Store(ABC):
 
     @abstractmethod
     def audit(self, workspace_id: str | None, actor: str, action: str, target_type: str | None = None, target_id: str | None = None, meta: Row | None = None) -> None: ...
+
+
+class StoreUnavailable(RuntimeError):
+    """Database unreachable or returned an unexpected status. Routes map this to 503; messages never include row data."""

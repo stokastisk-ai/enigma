@@ -54,7 +54,7 @@ def test_staged_api_tree_excludes_test_only_requirements(tmp_path):
     assert run(STAGE, "--service", "api", "--out", str(out)).returncode == 0
     files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
     assert {"apps/api/Dockerfile", "apps/api/requirements-railway.txt", "apps/api/enigma_api/main.py", "apps/api/enigma_api/bootstrap.py",
-            "infra/aws/sql/0001_core_schema.sql", "infra/aws/sql/0002_job_functions.sql"} <= files
+            "db/migrations/0001_core_schema.sql", "db/migrations/0002_job_functions.sql"} <= files
     assert "apps/api/requirements-dev.txt" not in files and not [f for f in files if "lambda" in f or "vercel" in f.lower()]
 
 

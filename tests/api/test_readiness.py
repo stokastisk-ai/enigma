@@ -7,7 +7,7 @@ from api_helpers import DEV_SECRET
 from enigma_api.main import create_app
 from enigma_api.settings import Settings
 from enigma_api.store.memory import MemoryStore
-from enigma_api.store.supabase import StoreUnavailable
+from enigma_api.store.base import StoreUnavailable
 
 SECRET = "c" * 32
 AUTH = {"Authorization": "Bearer " + SECRET}

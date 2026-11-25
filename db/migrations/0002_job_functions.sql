@@ -1,4 +1,4 @@
--- Atomic job / telemetry logic, PORTABLE PostgreSQL. Derived from supabase/migrations/0002. Executed only by the FastAPI application role (enigma_app).
+-- Atomic job / telemetry logic, PORTABLE PostgreSQL.. Executed only by the FastAPI application role (enigma_app).
 -- Every runtime-facing function takes the runtime id that FastAPI derived from the verified token,
 -- and re-checks it against the row: a runtime can never touch another runtime's job.
 

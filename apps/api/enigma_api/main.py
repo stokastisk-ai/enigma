@@ -10,7 +10,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import __version__
 from .deps import AppState
 from .errors import install_error_handlers
-from .realtime import NullBroadcaster, SupabaseBroadcaster
+from .realtime import NullBroadcaster
 from .security import UserVerifier
 from .settings import Settings, get_settings
 from .store.base import Store
@@ -83,41 +83,28 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
     if problems:
         raise RuntimeError("refusing to start with unsafe configuration: " + "; ".join(problems))
     if store is None:
-        if s.store == "dynamodb":
-            from .store.dynamodb import DynamoStore
-            store = DynamoStore(s.ddb_table)
-        elif s.store == "postgres":
+        if s.store == "postgres":
             from .store.postgres import PostgresStore
             store = PostgresStore(s.db_dsn)
-        elif s.store == "supabase":
-            from .store.supabase import SupabaseStore
-            store = SupabaseStore(s.supabase_url, s.supabase_service_role_key)
         else:
             from .store.memory import MemoryStore
             store = MemoryStore()
     if broadcaster is None:
-        broadcaster = SupabaseBroadcaster(s.supabase_url, s.supabase_service_role_key) if s.supabase_url and s.supabase_service_role_key else NullBroadcaster()
+        broadcaster = NullBroadcaster()      # chat updates reach browsers by authenticated polling of inference_events
 
     docs = not s.is_production
     app = FastAPI(title="Enigma control-plane API", version=__version__, docs_url="/api/v1/docs" if docs else None,
                   redoc_url=None, openapi_url="/api/v1/openapi.json" if docs else None)
-    import time as _time
-    from .awsops import Manifest, OpsService
-    _started = _time.time()
-    ops = OpsService(s.aws_ops, Manifest.parse(s.aws_manifest) if (s.aws_ops == "live" and s.aws_manifest) else None, ttl_s=s.aws_ops_cache_s, build_sha=s.build_sha,
-                     environment=s.environment, api_info=lambda: {"version": __version__, "store": s.store, "uptime_s": int(_time.time() - _started)})
-    app.state.enigma = AppState(settings=s, store=store, verifier=verifier or UserVerifier(s), broadcaster=broadcaster, ops=ops, **({"clock": clock} if clock else {}))
+    app.state.enigma = AppState(settings=s, store=store, verifier=verifier or UserVerifier(s), broadcaster=broadcaster, **({"clock": clock} if clock else {}))
     app.add_middleware(BodyLimitMiddleware, settings=s)
     install_error_handlers(app)
 
     from .routes_app import admin as admin_router
     from .routes_app import router as app_router
-    from .routes_ops import router as ops_router
     from .routes_runtime import router as rt_router
     app.include_router(rt_router)
     app.include_router(app_router)
     app.include_router(admin_router)
-    app.include_router(ops_router)
 
     @app.get("/api/v1/health", tags=["meta"])
     def health():

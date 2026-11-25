@@ -6,7 +6,7 @@ Authenticated LLM chat + GPU/vLLM observability console for a self-hosted [Stoka
 apps/web            Next.js 16 / React 19 App Router, shadcn/ui, Recharts (authenticated BFF at /api/enigma/*)
 apps/api            FastAPI (Python 3.13) control plane, no GPU libraries
 connector/          enigma_connector: GPU-host connector (stdlib urllib + nvidia-ml-py + prometheus_client)
-infra/aws/sql       portable PostgreSQL schema + atomic job functions (the production store)
+db/migrations       portable PostgreSQL schema + atomic job functions (the production store)
 packages/contracts  generated OpenAPI + TypeScript types
 supabase/           legacy Supabase schema (optional store, not used in production)
 tests/              pytest (API, connector, SQL), docs/ architecture, security, deployment

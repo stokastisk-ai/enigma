@@ -212,4 +212,4 @@ select zz_raises('app role cannot create tables (no DDL)', 'create table zz_nope
 select zz_raises('app role cannot truncate audit', 'truncate audit_events');
 select zz_raises('app role cannot update audit', $$update audit_events set actor = 'x'$$);
 reset role;
-select count(*) || ' AWS SQL checks passed' as summary from zz_results;
+select count(*) || ' SQL checks passed' as summary from zz_results;

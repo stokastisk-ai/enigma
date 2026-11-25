@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = {
     "web": ["apps/web", "packages/contracts"],
-    "api": ["apps/api", "infra/aws/sql"],
+    "api": ["apps/api", "db/migrations"],
 }
 DOCKERFILE = {"web": "apps/web/Dockerfile", "api": "apps/api/Dockerfile"}
 EXCLUDE_DIRS = {"node_modules", "__pycache__", ".pytest_cache", ".git", ".enigma-local", "test-results", "playwright-report", "e2e", "e2e-live",
