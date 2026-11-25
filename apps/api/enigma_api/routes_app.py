@@ -1,4 +1,4 @@
-"""User plane: Clerk-authenticated (via the Next.js BFF). Membership is checked on EVERY route; non-members get 404."""
+"""User plane: Neon-authenticated (via the Next.js BFF). Membership is checked on EVERY route; non-members get 404."""
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query, Request
 
 from . import series
-from .deps import AppState, aware, require_member, runtime_status, state, user_identity
+from .deps import AppState, aware, require_member, runtime_status, state, user_identity, is_admin
 from .errors import ApiError
 from .models import (ConversationCreate, JobView, ProjectCreate, RuntimeCreate, RuntimeTokenResponse, SubmitJob, SubmitResponse, WorkspaceCreate)
 from .ratelimit import RateLimiter
@@ -72,7 +72,6 @@ def _issue(st: AppState, rt: dict, user: UserIdentity, days: int, rotated_from: 
 
 @router.get("/me")
 def me(request: Request, user: User):
-    from .routes_ops import is_admin
     return {"user_id": user.user_id, "auth": user.auth, "is_admin": is_admin(request, user)}
 
 

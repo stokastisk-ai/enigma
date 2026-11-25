@@ -15,7 +15,7 @@ type Ctx = {
   runtimesError: ApiFailure | null; runtimesUpdatedAt: number | null; reloadRuntimes: () => void; reloadProjects: () => void;
   range: Range; setRange: (r: Range) => void; utc: boolean; setUtc: (u: boolean) => void; loading: boolean; error: ApiFailure | null;
   canAdmin: boolean; canWrite: boolean;
-  /** Enigma platform administrator (ENIGMA_ADMIN_SUBJECTS). Only controls whether the AWS Infrastructure nav item is shown; the BACKEND is the real gate. */
+  /** Enigma platform administrator (ENIGMA_ADMIN_SUBJECTS). Informational only; the BACKEND is the real gate. */
   isAdmin: boolean;
 };
 const C = createContext<Ctx | null>(null);

@@ -1,15 +1,14 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { sameOrigin } from "@/lib/server/cognito";
+import { sameOrigin } from "@/lib/server/origin";
 import * as classify from "@/lib/server/neon-errors";
 import { cacheClearAll, getNeonAuth, neonAuthEnabled, neonRequireVerified, type SdkError } from "@/lib/server/neon-auth";
 import { passwordProblem } from "@/lib/server/password-policy";
 import { clientIp, hit, reset } from "@/lib/server/rate-limit";
 
 /**
- * Neon Managed Better Auth endpoints (sign-in, sign-up, verify, resend, sign-out, me). 404 unless ENIGMA_NEON_AUTH=on and configured, so this code changes
- * nothing for Cognito users. Same-origin POSTs only (CSRF; the SDK's session cookies are SameSite as a second layer), strict bodies, generic errors (no
+ * Neon Managed Better Auth endpoints (sign-in, sign-up, verify, resend, sign-out, me). 404 unless ENIGMA_NEON_AUTH=on and configured. Same-origin POSTs only (CSRF; the SDK's session cookies are SameSite as a second layer), strict bodies, generic errors (no
  * account enumeration), rate limits per client address and per account, and no token ever reaches the browser: the SDK sets httpOnly cookies.
  * Failures are logged by action + status + error code ONLY (never an e-mail address, password, code or cookie), so a delivery or configuration problem can
  * be told apart from bad input in the Railway logs.
@@ -66,7 +65,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   if (!auth) return fail(503, "auth_unavailable", "authentication is not available");
 
   // Account-level limits (keyed by the e-mail STRING, so they behave identically whether or not an account exists).
-  const acct = h(b.email);
+  const acct = h(b.email ?? ""); // sign-out has no e-mail: hashing `undefined` threw a TypeError (500) before the SDK ever ran
   if (action === "sign-in" || action === "verify") {
     const a = hit(`neon:acct:${action}:${acct}`, action === "verify" ? 6 : 8, 15 * 60_000);
     if (!a.allowed) return fail(429, "rate_limited", "Too many attempts. Try again later.", {}, { "retry-after": String(a.retryAfterS) });
@@ -105,7 +104,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       }
       case "resend": {
         const origin = (process.env.ENIGMA_PUBLIC_ORIGIN ?? "").replace(/\/$/, "");
-        const { error } = await auth.sendVerificationEmail({ email: b.email, ...(origin ? { callbackURL: `${origin}/sign-in?provider=neon` } : {}) });
+        const { error } = await auth.sendVerificationEmail({ email: b.email, ...(origin ? { callbackURL: `${origin}/sign-in` } : {}) });
         if (error) {
           const o = classify.resend(error);
           if (o !== "accepted") return out(action, o, error);

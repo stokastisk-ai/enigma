@@ -29,11 +29,10 @@ KID = "kid-1"
 _KEY = ed25519.Ed25519PrivateKey.generate()
 _OTHER = ed25519.Ed25519PrivateKey.generate()
 _RSA = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-COGNITO = dict(auth_provider="cognito", cognito_region="us-east-1", cognito_user_pool_id="us-east-1_TESTPOOL", cognito_app_client_id="testclientid123")
 
 
 def settings(**kw) -> Settings:
-    return Settings(**{**dict(env="test", cron_secret="c" * 32, neon_auth_base_url=BASE, **COGNITO), **kw})
+    return Settings(**{**dict(env="test", cron_secret="c" * 32, neon_auth_base_url=BASE), **kw})
 
 
 def mint(sub="3f0f3f0e-0000-4000-8000-000000000001", *, key=_KEY, iss=ORIGIN, aud=ORIGIN, exp_in=600, verified=True, banned=False, alg="EdDSA", drop=(), kid=KID):
@@ -108,13 +107,14 @@ def test_alg_none_is_refused():
         verifier().verify(tok)
 
 
-def test_cognito_tokens_still_verify_while_neon_is_configured():
-    cog_key = _RSA
+def test_rs256_tokens_from_other_providers_are_refused():
+    """Only EdDSA tokens from the configured Neon Auth origin verify; a Cognito/Clerk-style RS256 token is a 401 even if its key were trusted."""
     claims = {"sub": "u-1", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TESTPOOL", "iat": int(time.time()), "exp": int(time.time()) + 600,
               "token_use": "access", "client_id": "testclientid123"}
-    tok = jwt.encode(claims, cog_key, algorithm="RS256")
-    v = UserVerifier(settings(), key_resolver=lambda t: _KEY.public_key() if jwt.get_unverified_header(t)["alg"] == "EdDSA" else cog_key.public_key())
-    assert v.verify(tok).user_id == "cognito:u-1"
+    tok = jwt.encode(claims, _RSA, algorithm="RS256")
+    v = UserVerifier(settings(), key_resolver=lambda t: _KEY.public_key() if jwt.get_unverified_header(t)["alg"] == "EdDSA" else _RSA.public_key())
+    with pytest.raises(ApiError):
+        v.verify(tok)
     assert v.verify(mint("n-1")).user_id == "neon:n-1"
 
 
@@ -156,27 +156,23 @@ def _app():
     return create_app(settings(), store=MemoryStore(clock), broadcaster=RecordingBroadcaster(), clock=clock, verifier=verifier())
 
 
-def test_neon_and_cognito_users_with_the_same_email_are_distinct_tenants():
-    """No identity merging by e-mail: a Neon user claiming the Cognito user's address sees nothing of the Cognito user's data."""
-    cog_claims = {"sub": "cog-1", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TESTPOOL", "iat": int(time.time()), "exp": int(time.time()) + 600,
-                  "token_use": "access", "client_id": "testclientid123", "email": "same@example.test"}
-    cog = jwt.encode(cog_claims, _RSA, algorithm="RS256")
-    v = UserVerifier(settings(), key_resolver=lambda t: _KEY.public_key() if jwt.get_unverified_header(t)["alg"] == "EdDSA" else _RSA.public_key())
+def test_two_neon_users_with_the_same_email_are_distinct_tenants():
+    """No identity merging by e-mail: a second Neon user claiming the first user's address sees nothing of their data."""
     clock = Clock()
-    app = create_app(settings(), store=MemoryStore(clock), broadcaster=RecordingBroadcaster(), clock=clock, verifier=v)
+    app = create_app(settings(), store=MemoryStore(clock), broadcaster=RecordingBroadcaster(), clock=clock, verifier=verifier())
     with TestClient(app, raise_server_exceptions=False) as c:
-        h_cog, h_neon = {"Authorization": f"Bearer {cog}"}, {"Authorization": f"Bearer {mint('neon-user', )}"}
-        r = c.post("/api/v1/app/workspaces", json={"name": "Cognito WS"}, headers=h_cog)
+        h_a, h_b = {"Authorization": f"Bearer {mint('user-a')}"}, {"Authorization": f"Bearer {mint('user-b')}"}
+        r = c.post("/api/v1/app/workspaces", json={"name": "A WS"}, headers=h_a)
         assert r.status_code == 201, r.text
         proj = r.json()["project"]["id"]
-        assert c.get("/api/v1/app/me", headers=h_neon).json()["user_id"] == "neon:neon-user"
-        assert c.get("/api/v1/app/workspaces", headers=h_neon).json()["items"] == []
-        assert c.get(f"/api/v1/app/projects/{proj}/runtimes", headers=h_neon).status_code == 404
-        assert c.get(f"/api/v1/app/projects/{proj}/runtimes", headers=h_cog).status_code == 200
+        assert c.get("/api/v1/app/me", headers=h_b).json()["user_id"] == "neon:user-b"
+        assert c.get("/api/v1/app/workspaces", headers=h_b).json()["items"] == []
+        assert c.get(f"/api/v1/app/projects/{proj}/runtimes", headers=h_b).status_code == 404
+        assert c.get(f"/api/v1/app/projects/{proj}/runtimes", headers=h_a).status_code == 200
 
 
 def test_neon_user_is_never_admin_unless_listed():
-    app = create_app(settings(admin_subjects="cognito:someone"), store=MemoryStore(Clock()), broadcaster=RecordingBroadcaster(), clock=Clock(), verifier=verifier())
+    app = create_app(settings(admin_subjects="neon:someone"), store=MemoryStore(Clock()), broadcaster=RecordingBroadcaster(), clock=Clock(), verifier=verifier())
     with TestClient(app, raise_server_exceptions=False) as c:
         h = {"Authorization": f"Bearer {mint('n')}"}
         assert c.get("/api/v1/app/me", headers=h).json()["is_admin"] is False

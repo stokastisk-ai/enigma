@@ -25,7 +25,6 @@ class AppState:
     verifier: UserVerifier
     broadcaster: Broadcaster
     limiters: dict[str, RateLimiter] = field(default_factory=dict)
-    ops: Any = None                                   # awsops.OpsService (admin-only AWS visibility); None until create_app builds it
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     monotonic: Callable[[], float] = time.monotonic   # rate-limiter time source; tests inject a manual clock, production keeps the real one
 
@@ -57,6 +56,11 @@ def lease_owner(ident: RuntimeIdentity = Depends(runtime_identity), x_enigma_ins
 def user_identity(request: Request, authorization: str | None = Header(default=None)) -> UserIdentity:
     st = state(request)
     return st.verifier.verify(_bearer(authorization))
+
+
+def is_admin(request: Request, user: UserIdentity) -> bool:
+    allowed = {s.strip() for s in state(request).settings.admin_subjects.split(",") if s.strip()}
+    return user.user_id in allowed
 
 
 def require_member(st: AppState, user: UserIdentity, workspace_id: str, min_role: str = "viewer") -> str:

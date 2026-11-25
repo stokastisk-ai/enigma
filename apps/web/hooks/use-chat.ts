@@ -2,22 +2,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiFailure, newKey } from "@/lib/api";
 import { TERMINAL, type JobEvent, type JobView, type Message } from "@/lib/types";
-import { useRealtimeConfig } from "@/components/enigma/realtime-bridge";
 
-export type Transport = "idle" | "realtime" | "polling";
+export type Transport = "idle" | "polling";
 export type Live = {
   jobId: string; status: JobView["status"]; text: string; chunks: number; startedAt: number; firstTokenAt: number | null; attempt: number;
   result: JobView["result"]; errorCode: string | null; errorMessage: string | null; reconnecting: boolean; transport: Transport;
 };
 export type SendParams = { runtimeId: string; content: string; maxTokens: number; temperature: number };
 
-const POLL_FAST = 400, POLL_SAFETY = 2500;
+const POLL_FAST = 400;
 
 /**
  * Streaming chat for one conversation.
  *  - Deltas are applied strictly in event_seq order, de-duplicated (Realtime + polling can both deliver), and a `reset` event clears the
  *    partial text of an abandoned attempt.
- *  - Supabase Realtime (private channel) is an optimisation; polling `after_seq` is the source of truth and the fallback.
+ *  - Authenticated polling of `after_seq` is the transport.
  *  - The persisted assistant message replaces the live bubble once the job is terminal.
  */
 export function useChat(conversationId: string | null) {
@@ -26,7 +25,6 @@ export function useChat(conversationId: string | null) {
   const [error, setError] = useState<ApiFailure | null>(null);
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  const rt = useRealtimeConfig();
 
   const seqRef = useRef(0);               // highest contiguous event_seq applied
   const buf = useRef<Map<number, JobEvent>>(new Map());   // out-of-order events waiting for their predecessors
@@ -75,10 +73,9 @@ export function useChat(conversationId: string | null) {
     stopRef.current();
     jobRef.current = jobId; seqRef.current = 0; buf.current.clear(); textRef.current = ""; chunksRef.current = 0;
     let stopped = false;
-    let transport: Transport = "polling";
+    const transport: Transport = "polling";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
-    let channelCleanup: (() => void) | null = null;
     const ctl = new AbortController();
     const startedAt = Date.now();
     let firstTokenAt: number | null = null;
@@ -98,7 +95,7 @@ export function useChat(conversationId: string | null) {
           setLive((l) => (l ? { ...l, transport: "idle" } : l));
           return;
         }
-        timer = setTimeout(poll, transport === "realtime" ? POLL_SAFETY : POLL_FAST);
+        timer = setTimeout(poll, POLL_FAST);
       } catch (e) {
         if (stopped || (e as Error).name === "AbortError") return;
         failures += 1;
@@ -109,36 +106,10 @@ export function useChat(conversationId: string | null) {
       }
     };
 
-    // optional low-latency path: private Realtime channel, authorised by RLS on realtime.messages
-    (async () => {
-      if (!rt) return;
-      try {
-        const { createClient } = await import("@supabase/supabase-js");
-        const sb = createClient(rt.url, rt.anonKey, { accessToken: rt.getToken, realtime: { params: { eventsPerSecond: 20 } } });
-        const ch = sb.channel(`conv:${convId}`, { config: { private: true } });
-        ch.on("broadcast", { event: "events" }, ({ payload }) => {
-          if (stopped || payload?.job_id !== jobId) return;
-          const evs: JobEvent[] = (payload.events ?? []).map((e: { seq: number; kind: JobEvent["kind"]; text: string | null }) => ({ seq: e.seq, kind: e.kind, text: e.text }));
-          if (applyEvents(evs)) {
-            if (firstTokenAt === null && textRef.current) firstTokenAt = Date.now();
-            setLive((l) => (l ? { ...l, text: textRef.current, chunks: chunksRef.current, firstTokenAt, transport: "realtime" } : l));
-          }
-          if (buf.current.size > 0) { clearTimeout(timer); void poll(); }       // a gap: fetch the missing events now
-        });
-        ch.on("broadcast", { event: "status" }, ({ payload }) => { if (payload?.job_id === jobId) { clearTimeout(timer); void poll(); } });
-        ch.subscribe((status) => {
-          transport = status === "SUBSCRIBED" ? "realtime" : "polling";
-          setLive((l) => (l ? { ...l, transport } : l));
-        });
-        channelCleanup = () => { void sb.removeChannel(ch); };
-        if (stopped) channelCleanup();
-      } catch { transport = "polling"; }
-    })();
-
     setLive({ jobId, status: "pending", text: "", chunks: 0, startedAt, firstTokenAt: null, attempt: 0, result: null, errorCode: null, errorMessage: null, reconnecting: false, transport });
     void poll();
-    stopRef.current = () => { stopped = true; clearTimeout(timer); ctl.abort(); channelCleanup?.(); };
-  }, [applyEvents, loadMessages, rt]);
+    stopRef.current = () => { stopped = true; clearTimeout(timer); ctl.abort(); };
+  }, [applyEvents, loadMessages]);
 
   useEffect(() => () => stopRef.current(), []);
 

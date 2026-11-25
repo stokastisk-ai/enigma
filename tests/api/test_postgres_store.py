@@ -1,4 +1,4 @@
-"""PostgresStore conformance on a THROWAWAY local PostgreSQL cluster loaded with infra/aws/sql.
+"""PostgresStore conformance on a THROWAWAY local PostgreSQL cluster loaded with db/migrations.
 
 * Re-runs every store-agnostic test of the existing API suite (jobs, tenancy, route guards) against the real SQL store, with the API
   connecting as a non-superuser LOGIN role that only inherits ``enigma_app`` (the same privilege shape planned for RDS).
@@ -30,11 +30,11 @@ from enigma_api.main import create_app  # noqa: E402
 from enigma_api.realtime import RecordingBroadcaster  # noqa: E402
 from enigma_api.settings import Settings  # noqa: E402
 from enigma_api.store.postgres import PostgresStore  # noqa: E402
-from enigma_api.store.supabase import StoreUnavailable  # noqa: E402
+from enigma_api.store.base import StoreUnavailable  # noqa: E402
 
 PGBIN = run_sql_tests.find_pg_bin()
 pytestmark = pytest.mark.skipif(PGBIN is None, reason="PostgreSQL server binaries not installed")
-SQL_DIR = run_sql_tests.ROOT / "infra" / "aws" / "sql"
+SQL_DIR = run_sql_tests.ROOT / "db" / "migrations"
 TABLES = ("audit_events,ingest_batches,vllm_metric_samples,gpu_samples,inference_events,inference_jobs,messages,conversations,"
           "inference_runs,runtime_credentials,runtimes,models,projects,memberships,workspaces")
 
@@ -188,7 +188,7 @@ def test_errors_never_echo_row_values_and_db_down_is_503(store):
 
 def test_dead_connection_recovers_for_the_next_request(store):
     assert store.get_role("nobody", str(uuid.uuid4())) is None
-    store._conn.close()                                                # simulate a frozen-Lambda dead socket
+    store._conn.close()                                                # simulate a dead socket after a Neon scale-to-zero
     assert store.get_role("nobody", str(uuid.uuid4())) is None
 
 

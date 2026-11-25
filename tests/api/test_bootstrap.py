@@ -18,7 +18,7 @@ from enigma_api import bootstrap  # noqa: E402
 
 PGBIN = run_sql_tests.find_pg_bin()
 pytestmark = pytest.mark.skipif(PGBIN is None, reason="PostgreSQL server binaries not installed")
-SQL_DIR = run_sql_tests.ROOT / "infra" / "aws" / "sql"
+SQL_DIR = run_sql_tests.ROOT / "db" / "migrations"
 PASSWORD = "Zq7-bootstrap-test-password-0123456789"
 
 

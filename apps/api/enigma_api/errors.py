@@ -52,7 +52,7 @@ def install_error_handlers(app: FastAPI) -> None:
     async def _http(request: Request, exc: StarletteHTTPException):
         return _body(request, exc.status_code, "http_error" if exc.status_code != 404 else "not_found", str(exc.detail))
 
-    from .store.supabase import StoreUnavailable
+    from .store.base import StoreUnavailable
 
     @app.exception_handler(StoreUnavailable)
     async def _store_down(request: Request, exc: StoreUnavailable):

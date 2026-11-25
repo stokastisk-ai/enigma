@@ -1,7 +1,16 @@
--- Enigma core schema. Identity = Clerk user id (JWT `sub`) via Supabase third-party auth.
--- Privileged writes happen only through FastAPI (service_role). Browsers get SELECT under RLS.
+-- Enigma core schema, PORTABLE PostgreSQL (Neon / local)..
+-- Design notes:
+--   * no RLS policies, no auth.jwt(), no realtime.* : authorization is enforced by the FastAPI layer (verified Neon Auth identity ->
+--     membership -> explicit workspace/runtime ids), and the SQL functions in 0002 re-check those ids against the rows.
+--     Browsers NEVER connect to the database, so there is no browser-facing policy surface to protect.
+--   * no pgcrypto: gen_random_uuid() and sha256() are built into PostgreSQL 13+/11+.
+--   * identity column `user_id`/`created_by`/`actor` holds the provider-namespaced subject (e.g. 'neon:<sub>').
+--   * one least-privilege application role, enigma_app (NOLOGIN group role; grant it to the real login role out of band).
+-- Apply to a DEDICATED Enigma database only. Never to another project's database.
 
-create extension if not exists pgcrypto;
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'enigma_app') then create role enigma_app nologin nosuperuser nocreatedb nocreaterole nobypassrls; end if;
+end $$;
 
 -- ---------------------------------------------------------------- tenancy
 create table public.workspaces (
@@ -250,7 +259,7 @@ create table public.ingest_batches (
 create table public.audit_events (
   id bigint generated always as identity primary key,
   workspace_id uuid,
-  actor text not null,            -- clerk user id, or 'runtime:<id>'
+  actor text not null,            -- user id, or 'runtime:<id>'
   action text not null,
   target_type text,
   target_id text,
@@ -259,79 +268,11 @@ create table public.audit_events (
 );
 create index audit_ws_idx on public.audit_events (workspace_id, at desc);
 
--- ---------------------------------------------------------------- RLS helpers
-create or replace function public.enigma_is_member(ws uuid, min_role text default 'viewer')
-returns boolean language sql stable security definer set search_path = '' as $$
-  select exists (
-    select 1 from public.memberships m
-    where m.workspace_id = ws
-      and m.user_id = (select auth.jwt() ->> 'sub')
-      and (case m.role when 'owner' then 4 when 'admin' then 3 when 'member' then 2 else 1 end)
-        >= (case min_role when 'owner' then 4 when 'admin' then 3 when 'member' then 2 else 1 end)
-  );
-$$;
-
-create or replace function public.enigma_safe_uuid(t text)
-returns uuid language plpgsql immutable as $$
-begin return t::uuid; exception when others then return null; end $$;
-
--- ---------------------------------------------------------------- RLS: private by default
-alter table public.workspaces enable row level security;
-alter table public.memberships enable row level security;
-alter table public.projects enable row level security;
-alter table public.models enable row level security;
-alter table public.runtimes enable row level security;
-alter table public.runtime_credentials enable row level security;
-alter table public.inference_runs enable row level security;
-alter table public.conversations enable row level security;
-alter table public.messages enable row level security;
-alter table public.inference_jobs enable row level security;
-alter table public.inference_events enable row level security;
-alter table public.gpu_samples enable row level security;
-alter table public.vllm_metric_samples enable row level security;
-alter table public.ingest_batches enable row level security;
-alter table public.audit_events enable row level security;
-
-create policy ws_select on public.workspaces for select to authenticated using (public.enigma_is_member(id));
-create policy mem_select on public.memberships for select to authenticated
-  using (user_id = (select auth.jwt() ->> 'sub') or public.enigma_is_member(workspace_id, 'admin'));
-create policy proj_select on public.projects for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy models_select on public.models for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy rt_select on public.runtimes for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy cred_select on public.runtime_credentials for select to authenticated using (public.enigma_is_member(workspace_id, 'admin'));
-create policy runs_select on public.inference_runs for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy conv_select on public.conversations for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy msg_select on public.messages for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy jobs_select on public.inference_jobs for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy events_select on public.inference_events for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy gpu_select on public.gpu_samples for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy vllm_select on public.vllm_metric_samples for select to authenticated using (public.enigma_is_member(workspace_id));
-create policy audit_select on public.audit_events for select to authenticated using (workspace_id is not null and public.enigma_is_member(workspace_id, 'admin'));
--- ingest_batches: no policy => no access for browsers.
-
--- Table privileges: browsers read only. Never grant anything to anon.
-revoke all on all tables in schema public from anon, authenticated;
-grant select on public.workspaces, public.memberships, public.projects, public.models, public.runtimes,
-  public.inference_runs, public.conversations, public.messages, public.inference_jobs, public.inference_events,
-  public.gpu_samples, public.vllm_metric_samples, public.audit_events to authenticated;
--- credentials: metadata only, never secret_hash
-grant select (id, workspace_id, project_id, runtime_id, prefix, scopes, created_by, created_at, expires_at, revoked_at, last_used_at)
-  on public.runtime_credentials to authenticated;
--- the job request holds the prompt snapshot; members of the workspace may read it (they can read the messages anyway)
-
--- audit trail is append-only, even for service_role
-revoke update, delete, truncate on public.audit_events from public, anon, authenticated, service_role;
-
--- ---------------------------------------------------------------- Realtime private channel authorisation
--- Topic format: conv:<conversation_id>. Requires Realtime "private channels" (RLS on realtime.messages).
-create policy enigma_realtime_receive on realtime.messages for select to authenticated
-  using (
-    realtime.messages.extension = 'broadcast'
-    and exists (
-      select 1 from public.conversations c
-      where c.id = public.enigma_safe_uuid(split_part((select realtime.topic()), ':', 2))
-        and split_part((select realtime.topic()), ':', 1) = 'conv'
-        and public.enigma_is_member(c.workspace_id)
-    )
-  );
--- No INSERT policy: browsers cannot publish. Only the FastAPI service role broadcasts.
+-- ---------------------------------------------------------------- privileges (least privilege)
+revoke all on schema public from public;
+grant usage on schema public to enigma_app;
+revoke all on all tables in schema public from public;
+grant select, insert, update, delete on all tables in schema public to enigma_app;
+-- audit trail is append-only, even for the application role
+revoke update, delete, truncate on public.audit_events from public, enigma_app;
+grant usage, select on all sequences in schema public to enigma_app;

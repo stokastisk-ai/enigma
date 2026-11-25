@@ -27,7 +27,7 @@ async function post(action: string, body: Record<string, string>): Promise<Reply
  * Neon e-mails a 6-digit code (valid 15 minutes). Sessions are httpOnly cookies set by the server; this component never sees a token.
  * Messages are deliberately the same for new and existing addresses (no account enumeration).
  */
-export function NeonAuth({ mode, alt, notice: initialNotice }: { mode: Mode; alt?: { href: string; label: string }; notice?: string }) {
+export function NeonAuth({ mode, notice: initialNotice }: { mode: Mode; notice?: string }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("form");
   const [email, setEmail] = useState("");
@@ -62,7 +62,7 @@ export function NeonAuth({ mode, alt, notice: initialNotice }: { mode: Mode; alt
       if (r.ok && mode === "sign-in") return router.replace("/app");
       if (r.ok && mode === "sign-up") {
         if (r.needsVerify) return toVerify("If this address can be registered, we sent a 6-digit code to it. It can take a minute; check Spam and Promotions. The code expires in 15 minutes.");
-        return router.replace("/sign-in?provider=neon");
+        return router.replace("/sign-in");
       }
       if (r.needsVerify) return toVerify("Your email is not verified yet. We sent a new 6-digit code if one was not already sent in the last minute.");
       setError(r.message ?? "Something went wrong.");
@@ -85,13 +85,13 @@ export function NeonAuth({ mode, alt, notice: initialNotice }: { mode: Mode; alt
         }
         setStep("form");
         setNotice("Email verified. Sign in with your password.");
-        if (mode === "sign-up") router.replace("/sign-in?provider=neon&verified=1");
+        if (mode === "sign-up") router.replace("/sign-in?verified=1");
         return;
       }
       if (r.code === "already_verified") {
         setStep("form");
         setNotice("This email is already verified. Sign in with your password.");
-        if (mode === "sign-up") router.replace("/sign-in?provider=neon");
+        if (mode === "sign-up") router.replace("/sign-in");
         return;
       }
       setError(r.message ?? "Could not verify the code.");
@@ -160,12 +160,24 @@ export function NeonAuth({ mode, alt, notice: initialNotice }: { mode: Mode; alt
           </div>
         ) : (
           <div className="flex flex-col gap-1 text-center text-sm text-muted-foreground">
-            <p>{mode === "sign-in" ? <>No account? <Link className="underline" href="/sign-up?provider=neon">Sign up</Link></> : <>Have an account? <Link className="underline" href="/sign-in?provider=neon">Sign in</Link></>}</p>
+            <p>{mode === "sign-in" ? <>No account? <Link className="underline" href="/sign-up">Sign up</Link></> : <>Have an account? <Link className="underline" href="/sign-in">Sign in</Link></>}</p>
             <button type="button" className="underline" onClick={() => { setStep("verify"); setError(null); setNotice("Enter the email you registered with and the 6-digit code we sent."); }} data-testid="have-code">Already have a code? Verify your email</button>
           </div>
         )}
-        {alt ? <p className="text-center text-xs text-muted-foreground"><Link className="underline" href={alt.href} data-testid="auth-alt">{alt.label}</Link></p> : null}
       </form>
     </main>
+  );
+}
+
+export function NeonSignOut() {
+  const router = useRouter();
+  return (
+    <div className="px-2">
+      <Button variant="ghost" size="sm" data-testid="sign-out" onClick={async () => {
+        await fetch("/api/auth/neon/sign-out", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => {});
+        router.replace("/");
+        router.refresh();
+      }}>Sign out</Button>
+    </div>
   );
 }

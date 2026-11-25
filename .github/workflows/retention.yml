@@ -1,4 +1,4 @@
-# Daily data-retention job. Replaces the retired Vercel cron: it calls the API's secret-protected prune endpoint, which deletes expired
+# Daily data-retention job. It calls the API's secret-protected prune endpoint, which deletes expired
 # job events and old GPU/vLLM telemetry samples. It wakes the sleeping Railway API for a few seconds a day and costs nothing on GitHub (public repo).
 # Needs: repository secret ENIGMA_CRON_SECRET (same value as the API's CRON_SECRET) and repository variable ENIGMA_API_URL (https origin of the API).
 # GitHub disables scheduled workflows after 60 days without repository activity; a failed or disabled run is visible in the Actions tab.

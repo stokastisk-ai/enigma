@@ -1,11 +1,11 @@
-"""PostgreSQL store (AWS RDS / any vanilla PostgreSQL 14+) using psycopg 3 and the portable schema in infra/aws/sql/.
+"""PostgreSQL store (Neon / any vanilla PostgreSQL 14+) using psycopg 3 and the portable schema in db/migrations/.
 
 Security model: the API connects as a LOGIN role that is a member of ``enigma_app`` (least privilege, no RLS bypass needed because no RLS
 exists in the portable schema). Authorisation is done by the FastAPI layer before any call; the SQL functions then re-check tenant /
-runtime ids against the rows, exactly like the Supabase store. All values are bound parameters; identifiers are fixed constants in this
+runtime ids against the rows, exactly as the SQL functions require. All values are bound parameters; identifiers are fixed constants in this
 file -- nothing user-controlled is ever interpolated into SQL.
 
-Lambda notes: one connection per execution environment (a Lambda environment serves one request at a time), opened lazily, autocommit so
+Serverless notes: one lock-guarded connection per process, opened lazily, autocommit so
 every statement / SQL function call is its own atomic transaction, reconnect once on a dropped connection, hard statement timeout.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .base import Row, Store
-from .supabase import StoreUnavailable      # same 503 mapping in the routes
+from .base import StoreUnavailable      # same 503 mapping in the routes
 
 log = logging.getLogger("enigma.postgres")
 
@@ -74,7 +74,7 @@ class PostgresStore(Store):
 
     def _ensure(self) -> psycopg.Connection:
         """Return a healthy connection. Opening is retried once (nothing has been sent yet). A connection idle longer than
-        IDLE_PROBE_S (a frozen Lambda environment may hold a dead socket) is probed with a harmless `select 1` and replaced if dead."""
+        IDLE_PROBE_S (a suspended Neon compute or a slept container may hold a dead socket) is probed with a harmless `select 1` and replaced if dead."""
         now = time.monotonic()
         if self._conn is not None and not self._conn.closed:
             idle = now - self._last_used

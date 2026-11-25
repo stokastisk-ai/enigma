@@ -1,5 +1,5 @@
 """Storage interface. Row values are plain dicts shaped like the Postgres rows; function results mirror the SQL functions in
-supabase/migrations/0002_job_functions.sql (``{"ok": True, ...}`` or ``{"error": "<code>", ...}``).
+db/migrations/0002_job_functions.sql (``{"ok": True, ...}`` or ``{"error": "<code>", ...}``).
 
 Authorisation is NOT done here: callers resolve the tenant first (membership for users, token scope for runtimes) and pass explicit
 workspace/runtime ids. The SQL functions re-check those ids against the rows, so a bug in a route cannot cross tenants silently.
@@ -110,3 +110,7 @@ class Store(ABC):
 
     @abstractmethod
     def audit(self, workspace_id: str | None, actor: str, action: str, target_type: str | None = None, target_id: str | None = None, meta: Row | None = None) -> None: ...
+
+
+class StoreUnavailable(RuntimeError):
+    """Database unreachable or returned an unexpected status. Routes map this to 503; messages never include row data."""

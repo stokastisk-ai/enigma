@@ -10,7 +10,7 @@ COPY apps/api/requirements.txt apps/api/requirements-railway.txt ./
 RUN pip install -r requirements-railway.txt
 COPY apps/api/enigma_api ./enigma_api
 # Portable schema for `python -m enigma_api.bootstrap` (a no-op unless ENIGMA_DB_ADMIN_DSN is set).
-COPY infra/aws/sql ./sql
+COPY db/migrations ./sql
 
 RUN useradd --system --uid 10001 --no-create-home enigma
 EXPOSE 8000

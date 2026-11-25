@@ -35,22 +35,15 @@ def test_hs256_rejected_when_dev_auth_off(store, bus, clock):
         assert c.get("/api/v1/app/me", headers={"Authorization": f"Bearer {dev_token('u1')}"}).status_code == 401
 
 
-def test_clerk_rs256_path_and_alg_none_rejected(store, bus, clock):
+def test_non_neon_algorithms_and_alg_none_rejected(store, bus, clock):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    s = Settings(env="test", clerk_issuer="https://clerk.example.test", clerk_authorized_parties="https://app.example.test")
+    s = Settings(env="test")
     app = create_app(s, store=store, broadcaster=bus, clock=clock, verifier=UserVerifier(s, key_resolver=lambda t: key.public_key()))
     now = int(time.time())
-    good = {"sub": "user_clerk_1", "iss": "https://clerk.example.test", "iat": now, "exp": now + 60, "azp": "https://app.example.test"}
+    good = {"sub": "user_1", "iss": "https://idp.example.test", "iat": now, "exp": now + 60}
     with TestClient(app) as c:
         h = lambda t: {"Authorization": f"Bearer {t}"}                       # noqa: E731
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode(good, key, algorithm="RS256"))).json()["auth"] == "clerk"
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode({**good, "iss": "https://evil.test"}, key, algorithm="RS256"))).status_code == 401
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode({**good, "azp": "https://evil.test"}, key, algorithm="RS256"))).status_code == 401
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode({**good, "exp": now - 5}, key, algorithm="RS256"))).status_code == 401
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode({**good, "sts": "pending"}, key, algorithm="RS256"))).status_code == 401
-        # signed with a different key: the resolver returns the trusted public key, so the signature must fail
-        assert c.get("/api/v1/app/me", headers=h(jwt.encode(good, other, algorithm="RS256"))).status_code == 401
+        assert c.get("/api/v1/app/me", headers=h(jwt.encode(good, key, algorithm="RS256"))).status_code == 401
         none_tok = jwt.encode(good, key=None, algorithm="none")
         assert c.get("/api/v1/app/me", headers=h(none_tok)).status_code == 401
 
@@ -162,8 +155,10 @@ def test_correlation_id_echoed_when_valid(client):
 
 @pytest.mark.parametrize("kwargs,expect", [
     ({"env": "production", "store": "memory"}, "ENIGMA_STORE"),
-    ({"env": "production", "store": "supabase"}, "SUPABASE_URL"),
-    ({"env": "production", "store": "supabase", "supabase_url": "https://x.supabase.co", "supabase_service_role_key": "k"}, "CLERK_JWKS_URL"),
+    ({"env": "production", "store": "postgres"}, "ENIGMA_DB_DSN"),
+    ({"env": "production", "store": "postgres", "db_dsn": "postgresql://u@h/d?sslmode=verify-full", "cron_secret": "c" * 32}, "NEON_AUTH_BASE_URL"),
+    ({"env": "production", "store": "postgres", "db_dsn": "postgresql://u@h/d?sslmode=require"}, "verify-full"),
+    ({"env": "production", "auth_provider": "cognito"}, "ENIGMA_AUTH_PROVIDER"),
     ({"env": "production", "dev_auth": True, "dev_jwt_secret": "d" * 40}, "DEV_AUTH"),
     ({"env": "development", "dev_auth": True, "dev_jwt_secret": "short"}, "32 characters"),
     ({"env": "staging", "dev_auth": True, "dev_jwt_secret": "d" * 40}, "DEV_AUTH"),
@@ -182,8 +177,8 @@ def test_railway_env_blocks_dev_auth(monkeypatch):
 
 def test_docs_hidden_in_production_config(monkeypatch):
     monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "production")
-    app = create_app(Settings(env="development", store="supabase", supabase_url="https://x.supabase.co", supabase_service_role_key="k",
-                              clerk_jwks_url="https://c/.well-known/jwks.json", clerk_issuer="https://c", cron_secret="c" * 32))
+    app = create_app(Settings(env="development", store="postgres", db_dsn="postgresql://u@h/d?sslmode=verify-full",
+                              neon_auth_base_url="https://ep-x.neonauth.us-east-2.aws.neon.tech/neondb/auth", cron_secret="c" * 32))
     with TestClient(app) as c:
         assert c.get("/api/v1/docs").status_code == 404 and c.get("/api/v1/openapi.json").status_code == 404
 

@@ -192,7 +192,7 @@ reset role;
 
 
 
--- ------------------------------------------------------------------ AWS/portable-specific privilege checks
+-- ------------------------------------------------------------------ portable privilege checks
 reset role;
 select zz_check('enigma_app is not superuser and cannot bypass RLS',
   (select not rolsuper and not rolbypassrls and not rolcreatedb and not rolcreaterole and not rolcanlogin from pg_roles where rolname = 'enigma_app'));
@@ -212,4 +212,4 @@ select zz_raises('app role cannot create tables (no DDL)', 'create table zz_nope
 select zz_raises('app role cannot truncate audit', 'truncate audit_events');
 select zz_raises('app role cannot update audit', $$update audit_events set actor = 'x'$$);
 reset role;
-select count(*) || ' AWS SQL checks passed' as summary from zz_results;
+select count(*) || ' SQL checks passed' as summary from zz_results;

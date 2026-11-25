@@ -1,6 +1,6 @@
 """One-shot, idempotent PostgreSQL bootstrap: ``python -m enigma_api.bootstrap``. Intended as a Railway PRE-DEPLOY command.
 
-Applies the portable schema (infra/aws/sql, copied to ``ENIGMA_SQL_DIR``) and (re)creates the least-privilege LOGIN role the API connects as.
+Applies the portable schema (db/migrations, copied to ``ENIGMA_SQL_DIR``) and (re)creates the least-privilege LOGIN role the API connects as.
 Needs an ADMIN connection, so it only acts when ``ENIGMA_DB_ADMIN_DSN`` is set; remove that variable once bootstrapped and this becomes a no-op.
 
     ENIGMA_DB_ADMIN_DSN    libpq DSN of a role allowed to create tables/roles (secret; never printed or logged)
@@ -57,9 +57,14 @@ def run(env: dict[str, str] | None = None) -> int:
                 say("applied 0001_core_schema.sql")
             c.execute(files[FUNCTIONS_FILE].read_text())              # create or replace: safe to repeat
             say("applied 0002_job_functions.sql")
+            for extra in sorted(p for p in sql_dir.glob("*.sql") if p.name not in (SCHEMA_FILE, FUNCTIONS_FILE)):
+                c.execute(extra.read_text())                          # later migrations are written to be idempotent
+                say(f"applied {extra.name}")
             exists = c.execute("select 1 from pg_roles where rolname = %s", (role,)).fetchone()
-            verb = "alter" if exists else "create"
-            c.execute(sql.SQL(verb + " role {} login nosuperuser nobypassrls nocreatedb nocreaterole password {}").format(sql.Identifier(role), sql.Literal(password)))
+            # Neon's owner is not a superuser and may not even *state* NOSUPERUSER in ALTER ROLE (42501); the role is created NOSUPERUSER and the
+            # verification below proves it still is, so the clause is only used on create.
+            attrs = "login nobypassrls nocreatedb nocreaterole" if exists else "login nosuperuser nobypassrls nocreatedb nocreaterole"
+            c.execute(sql.SQL(("alter" if exists else "create") + " role {} " + attrs + " password {}").format(sql.Identifier(role), sql.Literal(password)))
             if not exists:
                 c.execute(sql.SQL("grant enigma_app to {}").format(sql.Identifier(role)))
             say(f"role {role}: {'password rotated' if exists else 'created'}")

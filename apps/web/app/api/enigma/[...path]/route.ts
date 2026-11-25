@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiBase, cognitoSelected } from "@/lib/server/env";
-import { sameOrigin } from "@/lib/server/cognito";
+import { apiBase, devAuthAllowed } from "@/lib/server/env";
+import { sameOrigin } from "@/lib/server/origin";
 import { getSession } from "@/lib/server/session";
 import { ConversationCreate, ProjectCreate, RuntimeCreate, SubmitJob, WorkspaceCreate } from "@/lib/contracts";
 
 /**
  * Authenticated BFF. The browser never talks to FastAPI directly and never sees a bearer token:
- * this route verifies the session (Cognito, Clerk or the guarded dev login), then forwards ONLY allow-listed method+path combinations with a validated body.
+ * this route verifies the session (Neon Auth or the guarded dev login), then forwards ONLY allow-listed method+path combinations with a validated body.
  * Anything not listed is a 404, so the proxy cannot be used to reach other upstream paths (no SSRF / path traversal).
  */
 const ID = "[0-9a-fA-F-]{36}";
@@ -16,7 +16,6 @@ const R = (method: Rule["method"], pattern: string, extra: Partial<Rule> = {}): 
 
 const RULES: Rule[] = [
   R("GET", "me"),
-  R("GET", "admin/aws/(status|metrics|cost)"), // Enigma-admin only: the BACKEND enforces default-deny; this only forwards
   R("GET", "workspaces"),
   R("POST", "workspaces", { body: WorkspaceCreate }),
   R("GET", `workspaces/${ID}/projects`),
@@ -44,8 +43,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   const rule = RULES.find((r) => r.method === method && r.re.test(joined));
   if (!rule) return err(404, "not_found", "not found");
 
-  // Cognito sessions are ambient httpOnly cookies, so state-changing requests must be same-origin (SameSite=Lax is the second layer).
-  if (method === "POST" && cognitoSelected() && !sameOrigin(req.headers.get("origin"), req.headers.get("host"), process.env.ENIGMA_PUBLIC_HOST))
+  // Session cookies are ambient httpOnly cookies (dev auth, which is exempt, is local-only and refused on Railway/production), so state-changing requests must be same-origin (SameSite=Lax is the second layer).
+  if (method === "POST" && !devAuthAllowed() && !sameOrigin(req.headers.get("origin"), req.headers.get("host"), process.env.ENIGMA_PUBLIC_HOST))
     return err(403, "bad_origin", "cross-origin request refused");
   const session = await getSession();
   if (!session) return err(401, "unauthorized", "authentication required");

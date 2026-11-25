@@ -1,12 +1,11 @@
-"""Apply supabase/migrations to a THROWAWAY local Postgres and run the RLS / job-function assertions.
+"""Apply db/migrations (portable PostgreSQL) to a THROWAWAY local Postgres and run the job / isolation / privilege assertions.
 
 stdlib only (shells out to initdb / pg_ctl / psql). The cluster lives in a fresh temp directory this script creates
 and removes itself; it listens on a unix socket only, never a TCP port.
 
     python3.13 tests/sql/run_sql_tests.py
 
-Requires PostgreSQL server binaries with the pgcrypto contrib module. Not a substitute for testing on a real Supabase
-project (see docs/TEST_REPORT.md: RLS on Supabase itself is BLOCKED_EXTERNAL_SETUP).
+Requires PostgreSQL server binaries. Local evidence only; Neon is verified separately by the live checks.
 """
 from __future__ import annotations
 
@@ -20,6 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SQL_DIR = Path(__file__).resolve().parent
+
+
+STEPS = [SQL_DIR / "pg_shim.sql", *sorted((ROOT / "db" / "migrations").glob("*.sql")), SQL_DIR / "test_jobs.sql"]
 
 
 def find_pg_bin() -> Path | None:
@@ -52,9 +54,7 @@ def run_all(steps: list[Path] | None = None) -> tuple[bool, str]:
         def psql(path: Path) -> subprocess.CompletedProcess:
             return subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", str(path)], capture_output=True, text=True, env=env)
 
-        steps = steps or [SQL_DIR / "supabase_shim.sql", *sorted((ROOT / "supabase" / "migrations").glob("*.sql")),
-                 ROOT / "supabase" / "verify" / "rls_two_tenant.sql",      # hosted-project verifier: must pass AND leave nothing behind
-                 SQL_DIR / "assert_clean_after_verify.sql", SQL_DIR / "test_rls_and_jobs.sql"]
+        steps = steps or STEPS
         out = ""
         for step in steps:
             r = psql(step)

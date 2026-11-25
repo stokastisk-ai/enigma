@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 /**
- * Neon Managed Better Auth (server only). ADDITIVE to Cognito: nothing here runs unless ENIGMA_NEON_AUTH=on and both
+ * Neon Managed Better Auth (server only). The only production auth provider. Nothing here runs unless ENIGMA_NEON_AUTH=on and both
  * NEON_AUTH_BASE_URL (public Auth URL) and NEON_AUTH_COOKIE_SECRET (>= 32 chars, server secret) are valid.
  * The browser never receives a Neon token: the SDK keeps the session in httpOnly cookies and this module mints a short-lived (15 min) EdDSA JWT
  * on the server for the BFF to forward to FastAPI, which verifies it against the Auth URL's JWKS.

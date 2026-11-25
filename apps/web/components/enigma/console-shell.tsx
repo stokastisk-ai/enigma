@@ -16,7 +16,7 @@ function Header({ devAuth }: { devAuth: boolean }) {
       <Separator orientation="vertical" className="h-5" />
       <span className="truncate text-sm text-muted-foreground" data-testid="crumb">{c.workspace?.name ?? "…"} / {c.project?.name ?? "…"}</span>
       <div className="ml-auto flex items-center gap-2">
-        {devAuth ? <span className="rounded-md border border-mock/60 px-2 py-0.5 text-xs text-mock" data-testid="dev-auth-banner" title="Local development login. Not available in production.">DEV AUTH · no Clerk</span> : null}
+        {devAuth ? <span className="rounded-md border border-mock/60 px-2 py-0.5 text-xs text-mock" data-testid="dev-auth-banner" title="Local development login. Not available in production.">DEV AUTH</span> : null}
         <Select items={RANGES.map((r) => ({ value: r, label: `Last ${r}` }))} value={c.range} onValueChange={(v) => v && c.setRange(v as Range)}>
           <SelectTrigger size="sm" aria-label="Time range" data-testid="range-picker"><SelectValue /></SelectTrigger>
           <SelectContent>{RANGES.map((r) => <SelectItem key={r} value={r}>Last {r}</SelectItem>)}</SelectContent>
