@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NewRuntimeButton } from "@/components/enigma/runtime-admin";
 import { useConsole } from "@/components/enigma/console-context";
 import { EmptyState, Freshness, MockBadge, RuntimeStatusBadge } from "@/components/enigma/status";
+import { softwareText } from "@/lib/software";
 
 export default function Runtimes() {
   const c = useConsole();
@@ -18,7 +19,7 @@ export default function Runtimes() {
                 <span className="text-muted-foreground">Model</span><span className="break-all">{r.served_model ?? "not reported"}</span>
                 <span className="text-muted-foreground">Parallelism</span><span>{r.tp ? `TP${r.tp} / PP${r.pp}` : "—"}{r.max_model_len ? ` · context ${r.max_model_len}` : ""}</span>
                 <span className="text-muted-foreground">GPUs</span><span>{r.capabilities.gpus?.length ? r.capabilities.gpus.map((g) => `${g.index}: ${g.name ?? "?"}`).join("; ") : "none reported"}</span>
-                <span className="text-muted-foreground">Software (self-reported)</span><span className="break-all">{Object.entries(r.binary_identity_reported).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") || "—"}</span>
+                <span className="text-muted-foreground">Software (self-reported)</span><span className="break-all">{softwareText(r.binary_identity_reported)}</span>
               </CardContent>
             </Card>
           ))}

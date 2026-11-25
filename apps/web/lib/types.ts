@@ -4,7 +4,7 @@ export type RuntimeStatus = "online" | "stale" | "offline" | "never_connected";
 export type Runtime = {
   id: string; name: string; project_id: string; is_mock: boolean; served_model: string | null; tp: number | null; pp: number | null;
   max_model_len: number | null; capabilities: { gpus?: { index: number; uuid: string | null; name: string | null; memory_total_mib: number | null }[] } & Record<string, unknown>;
-  binary_identity_reported: Record<string, string>; last_heartbeat_at: string | null; status: RuntimeStatus; heartbeat_age_s: number | null;
+  binary_identity_reported: Record<string, string | null>; last_heartbeat_at: string | null; status: RuntimeStatus; heartbeat_age_s: number | null;
 };
 export type Conversation = { id: string; title: string; runtime_id: string | null; updated_at: string };
 export type Measured = { ttft_ms?: number; e2e_ms?: number; stream_chunks?: number; chunks_per_s?: number; completion_tokens?: number; model?: string; tp?: number; pp?: number; max_model_len?: number; is_mock?: boolean };

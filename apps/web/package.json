@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --test lib/session.test.ts lib/server/public-paths.test.ts lib/server/page-guard.test.ts lib/server/hosted-env.test.ts lib/server/neon-auth.test.ts lib/server/rate-limit.test.ts lib/server/password-policy.test.ts lib/server/neon-errors.test.ts lib/server/origin.test.ts lib/server/retry.test.ts",
+    "test:unit": "node --test lib/session.test.ts lib/server/public-paths.test.ts lib/server/page-guard.test.ts lib/server/hosted-env.test.ts lib/server/neon-auth.test.ts lib/server/rate-limit.test.ts lib/server/password-policy.test.ts lib/server/neon-errors.test.ts lib/server/origin.test.ts lib/server/retry.test.ts lib/software.test.ts",
     "test:e2e": "npm run build:e2e && playwright test",
     "gen:api": "openapi-typescript ../../packages/contracts/openapi.json -o ../../packages/contracts/src/api.d.ts",
     "build:e2e": "ENIGMA_DIST_DIR=.next-e2e ENIGMA_NEON_AUTH= next build"

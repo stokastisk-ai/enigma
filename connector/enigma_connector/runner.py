@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from . import __version__
 from .config import Config
+from .diag import NULL_DIAG, DiagLog
 from .http import ApiClient, ApiError, AuthError, Transient, backoff_delays
 from .jobs import JobExecutor, StreamingLlm
 from .pacing import ClaimPacer
@@ -20,11 +21,20 @@ from .spool import Spool
 
 log = logging.getLogger("enigma.runner")
 
+# Independently switchable subsystems. The default (None) enables all of them, exactly as before; diagnostic stages enable a subset so a crash can be
+# attributed to the component that was running. "upload" = periodic telemetry upload; stop() still makes ONE final flush of whatever was sampled.
+FEATURES = frozenset({"heartbeat", "jobs", "gpu", "vllm", "upload"})
+
 
 class Connector:
     def __init__(self, cfg: Config, api: ApiClient, llm: StreamingLlm, gpu: Any, vllm: Any, spool: Spool, *, is_mock: bool = False,
                  sdk_identity: dict | None = None, on_job_done: Callable[[str], None] | None = None,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, features: frozenset[str] | set[str] | None = None, diag: DiagLog | None = None):
+        self.features = FEATURES if features is None else frozenset(features)
+        unknown = self.features - FEATURES
+        if unknown:
+            raise ValueError(f"unknown connector features: {sorted(unknown)}")
+        self.diag = diag or NULL_DIAG
         self.cfg, self.api, self.llm, self.gpu, self.vllm, self.spool = cfg, api, llm, gpu, vllm, spool
         self.is_mock, self.sdk_identity, self.sleep = is_mock, sdk_identity or {}, sleep
         self.on_job_done = on_job_done
@@ -55,6 +65,7 @@ class Connector:
             try:
                 r = self.api.post("/api/v1/runtimes/register", body)
                 self.run_id, self.runtime_id = r["run_id"], r["runtime_id"]
+                self.diag.emit("register_ok", runtime_id=self.runtime_id, run_id=self.run_id, is_mock=self.is_mock, features=sorted(self.features))
                 return r
             except Transient:
                 log.warning("register: API unreachable, retrying")
@@ -63,15 +74,25 @@ class Connector:
 
     def start(self) -> None:
         self.register()
-        for name, fn in (("heartbeat", self._heartbeat_loop), ("telemetry", self._telemetry_loop), ("jobs", self._job_loop)):
+        wanted = (("heartbeat", self._heartbeat_loop, "heartbeat" in self.features),
+                  ("telemetry", self._telemetry_loop, bool(self.features & {"gpu", "vllm", "upload"})),
+                  ("jobs", self._job_loop, "jobs" in self.features))
+        for name, fn, enabled in wanted:
+            if not enabled:
+                self.diag.emit("thread_skipped", name=name)
+                continue
             t = threading.Thread(target=self._guard(fn), name=f"enigma-{name}", daemon=True)
             t.start()
             self._threads.append(t)
+            self.diag.emit("thread_started", name=name)
 
     def stop(self, timeout: float = 10.0) -> None:
+        self.diag.emit("stopping", stats=dict(self.stats))
         self.stop_event.set()
         for t in self._threads:
             t.join(timeout)
+            if t.is_alive():
+                self.diag.emit("thread_join_timeout", name=t.name, timeout_s=timeout)
         try:
             self._upload_telemetry(final=True)
         except Exception:                                        # noqa: BLE001 - shutting down; the spool keeps what failed
@@ -83,10 +104,12 @@ class Connector:
                 fn()
             except AuthError as e:
                 self.fatal = e
+                self.diag.emit("thread_fatal_auth", name=threading.current_thread().name, status=e.status, code=e.code)
                 log.error("credential rejected (%s): stopping connector; issue a new token in Enigma", e.code)
                 self.stop_event.set()
             except Exception as e:                               # noqa: BLE001
                 self.fatal = e
+                self.diag.emit("thread_crashed", name=threading.current_thread().name, error=type(e).__name__)
                 log.error("connector thread crashed: %s", type(e).__name__)
                 self.stop_event.set()
         return run
@@ -97,11 +120,13 @@ class Connector:
         while not self.stop_event.is_set():
             try:
                 self.api.post(f"/api/v1/runtimes/{self.runtime_id}/heartbeat")
+                self.diag.emit("heartbeat_ok")
                 delays = backoff_delays(1.0, 15.0)
                 if self._wait(self.cfg.heartbeat_interval_s):
                     return
-            except Transient:
+            except Transient as e:
                 self.stats["heartbeats_failed"] += 1
+                self.diag.emit("heartbeat_failed", error=str(e))
                 if self._wait(next(delays)):
                     return
 
@@ -119,14 +144,17 @@ class Connector:
         try:
             self.api.post("/api/v1/telemetry/batch", batch)
             self.stats["batches_sent"] += 1
+            self.diag.emit("upload_ok", batch=batch.get("batch_id", "")[:8], gpu_rows=len(batch.get("gpu", [])), vllm_rows=len(batch.get("vllm", [])))
             return True
-        except Transient:
+        except Transient as e:
+            self.diag.emit("upload_transient_failure", error=str(e))
             return False
         except ApiError as e:
             if e.code in ("run_not_found",):
                 batch["run_id"] = self.run_id                                    # a re-registration changed the run: retarget once
                 return False
             self.stats["batches_dropped"] += 1                                   # validation failure: poison batch, never block the queue
+            self.diag.emit("upload_rejected", status=e.status, code=e.code)
             log.warning("telemetry batch rejected (%s): dropped", e.code)
             return True
 
@@ -161,23 +189,29 @@ class Connector:
         while not self.stop_event.is_set():
             t0 = time.monotonic()
             try:
-                if self.gpu is not None:
+                if self.gpu is not None and "gpu" in self.features:
+                    t_s = time.monotonic()
+                    rows = self.gpu.sample()
+                    self.diag.emit("gpu_sample", gpus=len(rows), ms=round((time.monotonic() - t_s) * 1000, 1), mem_used_mib=[r.get("mem_used_mib") for r in rows])
                     with self._lock:
-                        self._gpu_buf.extend(self.gpu.sample())
+                        self._gpu_buf.extend(rows)
                         del self._gpu_buf[:-self.cfg.max_batch_gpu_rows * 4]
-                if self.vllm is not None and t0 - last_vllm >= self.cfg.vllm_interval_s:
+                if self.vllm is not None and "vllm" in self.features and t0 - last_vllm >= self.cfg.vllm_interval_s:
                     last_vllm = t0
+                    t_s = time.monotonic()
                     s = self.vllm.sample()
+                    self.diag.emit("vllm_sample", got=bool(s), ms=round((time.monotonic() - t_s) * 1000, 1), error=getattr(self.vllm, "last_error", None))
                     if s:
                         with self._lock:
                             self._vllm_buf.append(s)
                             del self._vllm_buf[:-self.cfg.max_batch_vllm_rows * 4]
-                if t0 - last_upload >= self.cfg.upload_interval_s:
+                if "upload" in self.features and t0 - last_upload >= self.cfg.upload_interval_s:
                     last_upload = t0
                     self._upload_telemetry()
             except AuthError:
                 raise
             except Exception as e:                                               # noqa: BLE001 - sampling must never kill the connector
+                self.diag.emit("telemetry_tick_failed", error=type(e).__name__)
                 log.warning("telemetry tick failed: %s", type(e).__name__)
             self._wait(max(0.0, self.cfg.gpu_interval_s - (time.monotonic() - t0)))
 
@@ -188,6 +222,7 @@ class Connector:
         while not self.stop_event.is_set():
             try:
                 r = self.api.post("/api/v1/jobs/claim", {"lease_seconds": self.cfg.lease_seconds})
+                self.diag.emit("claim_ok", job=bool(r.get("job")))
                 delays = backoff_delays(0.5, 15.0)
             except Transient:
                 if self._wait(next(delays)):

@@ -11,6 +11,9 @@ from typing import Any, Callable
 from .config import Config
 
 
+MAX_RESPONSE_BYTES = 1024 * 1024        # every Enigma API reply is a few KiB; refuse to buffer more than this
+
+
 class ApiError(Exception):
     def __init__(self, status: int, code: str, message: str = "", extra: dict | None = None):
         super().__init__(f"{status} {code}")
@@ -37,12 +40,14 @@ class ApiClient:
             "User-Agent": "enigma-connector/0.1"})
         try:
             with self._open(req, timeout=self.cfg.request_timeout_s) as r:
-                raw = r.read()
+                raw = r.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise Transient("response_too_large")
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
             payload = {}
             try:
-                payload = json.loads(e.read().decode("utf-8", "replace")).get("error", {})
+                payload = json.loads(e.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace")).get("error", {})
             except (ValueError, AttributeError):
                 pass
             code = payload.get("code", "http_error")

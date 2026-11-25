@@ -18,6 +18,7 @@ COUNTERS = {"prompt_tokens_total": "vllm:prompt_tokens", "generation_tokens_tota
 HISTS = {"ttft_hist": "vllm:time_to_first_token_seconds", "e2e_hist": "vllm:e2e_request_latency_seconds", "itl_hist": "vllm:inter_token_latency_seconds"}
 KV = "vllm:kv_cache_usage_perc"        # fraction 0..1 ("1 means 100 percent")
 SUCCESS = "vllm:request_success"
+MAX_METRICS_BYTES = 8 * 1024 * 1024      # a vLLM exposition is ~100 KiB; never buffer an unbounded body
 
 
 def _finite(v: float) -> bool:
@@ -82,7 +83,10 @@ class VllmSampler:
 
     def _http(self) -> str:
         with urllib.request.urlopen(self.url, timeout=self.timeout) as r:      # noqa: S310 - localhost only (Config.validate)
-            return r.read().decode("utf-8", "replace")
+            raw = r.read(MAX_METRICS_BYTES + 1)
+        if len(raw) > MAX_METRICS_BYTES:
+            raise ValueError("metrics response too large")
+        return raw.decode("utf-8", "replace")
 
     def sample(self, now: datetime | None = None) -> dict | None:
         try:
