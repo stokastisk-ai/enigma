@@ -1,8 +1,8 @@
 /**
- * Public (unauthenticated) page paths, matched natively instead of with Clerk's deprecated `createRouteMatcher`.
+ * Public (unauthenticated) page paths, matched natively (no framework route matcher).
  *
  * This list is only a redirect optimisation for the proxy. It is NOT the authorization boundary: every protected layout and route handler calls
- * `requirePageSession()` / `getSession()` itself (Clerk's own guidance for removing path-based gates). Anything not listed is treated as protected,
+ * `requirePageSession()` / `getSession()` itself (path gates are not an authorization boundary). Anything not listed is treated as protected,
  * so a path-normalisation surprise can only over-protect, never expose.
  */
 const PUBLIC = /^\/(?:sign-in|sign-up)(?:\/[^/]*)*\/?$/;

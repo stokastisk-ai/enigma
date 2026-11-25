@@ -188,7 +188,7 @@ def test_errors_never_echo_row_values_and_db_down_is_503(store):
 
 def test_dead_connection_recovers_for_the_next_request(store):
     assert store.get_role("nobody", str(uuid.uuid4())) is None
-    store._conn.close()                                                # simulate a frozen-Lambda dead socket
+    store._conn.close()                                                # simulate a dead socket after a Neon scale-to-zero
     assert store.get_role("nobody", str(uuid.uuid4())) is None
 
 

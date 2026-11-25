@@ -1,19 +1,12 @@
-import { cognitoConfig } from "./cognito";
 import { devAuthEnabled } from "./hosted-env";
+import { neonAuthEnabled } from "./neon-auth";
 
 /** Server-only configuration. Nothing here is exposed to the browser (no NEXT_PUBLIC_ prefix). */
 
-/** Which identity provider is selected. Cognito (AWS) wins when ENIGMA_AUTH_PROVIDER=cognito and its public identifiers are valid. */
-export const cognitoSelected = () => process.env.ENIGMA_AUTH_PROVIDER === "cognito" && cognitoConfig() !== null;
+/** True when Neon Managed Better Auth is configured (the only real identity provider). */
+export const realAuthConfigured = () => neonAuthEnabled();
 
-/** Clerk is the historical provider; it is ignored whenever Cognito is selected so the two can never both be active. */
-export const clerkConfigured = () =>
-  !cognitoSelected() && Boolean(process.env.CLERK_SECRET_KEY && process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-
-/** True when a real identity provider (Cognito or Clerk) is configured. */
-export const realAuthConfigured = () => cognitoSelected() || clerkConfigured();
-
-/** Dev auth exists only for local mock E2E. It can never be enabled on Railway/AWS-hosted production or when a real provider is configured. */
+/** Dev auth exists only for local mock E2E. It can never be enabled on Railway or in production. */
 export const devAuthAllowed = () => devAuthEnabled();
 
 export const apiBase = () => (process.env.ENIGMA_API_URL ?? process.env.ENIGMA_API_BASE_URL ?? "").replace(/\/$/, "");

@@ -192,7 +192,7 @@ reset role;
 
 
 
--- ------------------------------------------------------------------ AWS/portable-specific privilege checks
+-- ------------------------------------------------------------------ portable privilege checks
 reset role;
 select zz_check('enigma_app is not superuser and cannot bypass RLS',
   (select not rolsuper and not rolbypassrls and not rolcreatedb and not rolcreaterole and not rolcanlogin from pg_roles where rolname = 'enigma_app'));

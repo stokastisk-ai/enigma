@@ -1,5 +1,5 @@
 # Railway (long-running container) runtime for apps/api. Python 3.13. NO torch / vllm / stokastisk / CUDA / nvidia-ml-py here.
-# Adds the ASGI server and the PostgreSQL driver that requirements.txt omits. boto3 / moto are test-only (requirements-dev.txt) and not needed on Railway.
+# Adds the ASGI server and the PostgreSQL driver that requirements.txt omits.
 -r requirements.txt
 psycopg[binary]==3.3.9
 uvicorn==0.54.0

@@ -1,5 +1,5 @@
 """Storage interface. Row values are plain dicts shaped like the Postgres rows; function results mirror the SQL functions in
-supabase/migrations/0002_job_functions.sql (``{"ok": True, ...}`` or ``{"error": "<code>", ...}``).
+db/migrations/0002_job_functions.sql (``{"ok": True, ...}`` or ``{"error": "<code>", ...}``).
 
 Authorisation is NOT done here: callers resolve the tenant first (membership for users, token scope for runtimes) and pass explicit
 workspace/runtime ids. The SQL functions re-check those ids against the rows, so a bug in a route cannot cross tenants silently.

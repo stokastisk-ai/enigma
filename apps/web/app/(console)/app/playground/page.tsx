@@ -82,7 +82,7 @@ export default function Playground() {
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm">
           <Button variant="outline" size="xs" className="lg:hidden" onClick={newChat} disabled={!c.canWrite}>New chat</Button>
           {rt ? <><RuntimeStatusBadge status={rt.status} /><span className="truncate text-muted-foreground">{rt.name}{rt.served_model ? ` · ${rt.served_model}` : ""}</span>{rt.is_mock ? <MockBadge /> : null}</> : <span className="text-muted-foreground">No runtime</span>}
-          {live ? <Badge variant="outline" className="ml-auto" data-testid="transport">{live.transport === "realtime" ? "Realtime" : live.transport === "polling" ? "Polling" : "Idle"}</Badge> : null}
+          {live ? <Badge variant="outline" className="ml-auto" data-testid="transport">{live.transport === "polling" ? "Polling" : "Idle"}</Badge> : null}
         </div>
         {offline ? <Alert className="m-3 border-warn/40" data-testid="offline-banner"><AlertTitle>{reason}</AlertTitle><AlertDescription>You can still read earlier conversations. New prompts need a connected runtime.</AlertDescription></Alert>
           : rt?.status === "stale" ? <Alert className="m-3 border-warn/40"><AlertTitle>Runtime heartbeat is late</AlertTitle><AlertDescription>It may be about to disconnect. Prompts are still accepted.</AlertDescription></Alert> : null}

@@ -9,7 +9,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // The mock E2E suite builds into its own directory with Clerk disabled, so it never shares a build with the real-auth configuration.
+  // The mock E2E suite builds into its own directory with Neon Auth disabled, so it never shares a build with the Neon-auth configuration.
   distDir: process.env.ENIGMA_DIST_DIR || ".next",
   poweredByHeader: false,
   // Self-contained Node server bundle (.next/standalone/server.js) used by apps/web/Dockerfile on Railway (ENIGMA_STANDALONE=1); the default build is unchanged.

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Boxes, Cloud, Cpu, Gauge, KeyRound, MessagesSquare, Server, Timer } from "lucide-react";
+import { Activity, Boxes, Cpu, Gauge, KeyRound, MessagesSquare, Server, Timer } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,9 +24,6 @@ const MANAGE: NavItem[] = [
   { href: "/app/projects", label: "Projects", Icon: Boxes },
   { href: "/app/settings/api-keys", label: "API keys", Icon: KeyRound },
 ];
-// Platform-admin only (the page and its API are default-deny on the backend; this just hides a link that would only show "not authorised").
-const ADMIN: NavItem[] = [{ href: "/app/admin/aws", label: "AWS Infrastructure", Icon: Cloud }];
-
 export function AppSidebar({ authSlot }: { authSlot?: React.ReactNode }) {
   const path = usePathname();
   const c = useConsole();
@@ -60,7 +57,7 @@ export function AppSidebar({ authSlot }: { authSlot?: React.ReactNode }) {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {[{ label: "Observe", items: NAV }, { label: "Manage", items: MANAGE }, ...(c.isAdmin ? [{ label: "Platform admin", items: ADMIN }] : [])].map((g) => (
+        {[{ label: "Observe", items: NAV }, { label: "Manage", items: MANAGE }].map((g) => (
           <SidebarGroup key={g.label}>
             <SidebarGroupLabel>{g.label}</SidebarGroupLabel>
             <SidebarMenu>

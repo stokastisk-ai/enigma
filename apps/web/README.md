@@ -1,6 +1,6 @@
 # Enigma web (Next.js 16 / React 19)
 
-Authenticated console + BFF. The browser only talks to this app: `/api/enigma/*` verifies the session (Cognito cookies, Clerk, or the guarded local dev login), allow-lists method and path, validates bodies with zod and forwards to the FastAPI service with a server-side bearer token. Auth routes live under `/api/auth/*`.
+Authenticated console + BFF. The browser only talks to this app: `/api/enigma/*` verifies the session (Neon Managed Better Auth cookies, or the guarded local dev login), allow-lists method and path, validates bodies with zod and forwards to the FastAPI service with a server-side bearer token. Auth routes live under `/api/auth/*`.
 
 ```bash
 npm ci
