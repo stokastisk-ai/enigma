@@ -14,7 +14,7 @@ Rules
 ## P. Prelude — guard and marker helper (stdlib only, no network)
 
 ```python
-import os, json, time, platform, threading
+import os, json, time, platform, threading, shutil
 assert os.path.isdir("/kaggle/working"), "Kaggle only"
 ISO = "/kaggle/working/enigma-iso"
 os.makedirs(ISO, exist_ok=True)
@@ -39,9 +39,16 @@ def mark(name, **fields):
                 oom = int(line.split()[1])
     except OSError:
         pass
+    disk = {}
+    for d in ("/kaggle/working", "/tmp", os.path.expanduser("~")):
+        try:
+            u = shutil.disk_usage(d)
+            disk[d] = {"used_gib": round(u.used / 2**30, 2), "free_gib": round(u.free / 2**30, 2)}
+        except OSError:
+            pass
     rec = {"marker": name, "utc": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), "since_prelude_s": round(time.monotonic() - _T0, 1),
            "vm_uptime_s": up, "pid": os.getpid(), "pgid": os.getpgid(0), "sid": os.getsid(0), "ppid": os.getppid(),
-           "threads": threading.active_count(), "mem_mib": mem, "oom_kill": oom, **fields}
+           "threads": threading.active_count(), "mem_mib": mem, "oom_kill": oom, "disk": disk, **fields}
     line = json.dumps(rec, default=str)
     with open(f"{ISO}/markers.jsonl", "a") as fh:
         fh.write(line + "\n"); fh.flush(); os.fsync(fh.fileno())
