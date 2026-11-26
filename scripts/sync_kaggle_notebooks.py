@@ -21,7 +21,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "docs" / "kaggle" / "diagnostics"
 NAMES = ("01_enigma_kaggle_platform_aws_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_aws_integration")
-_KEY = re.compile(r"enig_rt_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}")
+_KEY = re.compile(r"(?:enig_rt|edx)_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")     # runtime key, diagnostic key, AWS key id
 
 
 def sha256(path: Path) -> str:
@@ -44,7 +44,7 @@ def validate(path: Path) -> None:
                 raise ValueError(f"{path.name}: cell {i} carries execution output")
             ast.parse("".join(c["source"]), filename=f"{path.name}#cell{i}")
     if _KEY.search(raw):
-        raise ValueError(f"{path.name}: contains something that looks like a runtime key")
+        raise ValueError(f"{path.name}: contains something that looks like a credential")
 
 
 def sync(dest: Path, *, dry_run: bool = False) -> list[dict]:

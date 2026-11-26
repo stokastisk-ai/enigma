@@ -48,21 +48,36 @@ def test_gpu_notebooks_verify_the_exact_published_build5_bytes_before_installing
     assert "ACKNOWLEDGE_PYDANTIC_SETTINGS_DOWNGRADE = False" in text and '_build == "5"' in text
     assert text.index('os.environ[_k] = ",".join') < text.index("server.start_and_wait")          # loopback no_proxy before the build-5 server starts
     assert "--no-deps" not in text
+    assert "pre_rc, pre_conflicts = pip_check()" in text and "and not new_conflicts)" in text                   # install PASS requires no NEW conflict
 
 
 def test_notebook_01_is_stdlib_only_and_orders_idle_controls_aws_railway():
     text = "\n".join(code(N1))
     assert "REQUIRE_NO_INPUTS = True" in code(N1)[0]
     assert not re.search(r"^\s*(import|from)\s+(torch|pynvml|vllm|stokastisk|triton|enigma_connector)\b", text, re.M)
-    assert '"-m", "pip"' not in text and '"git",' not in text and "ENIGMA_RUNTIME_TOKEN" not in text            # no installs, no clone, no runtime key
-    order = [text.index(k) for k in ('observe("idle_10min", 600', 'get("pypi"', 'rmark("aws_first_event"', 'rmark("before_railway"', "/api/v1/health")]
+    assert '"-m", "pip"' not in text and '"git",' not in text                                       # no installs, no clone
+    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "token_getter" not in text and not re.search(r"^\s*(import|from)\s+boto3", text, re.M) and "AWS_SECRET" not in text
+    order = [text.index(k) for k in ('observe("idle_10min", 600', 'get("pypi"', 'observe("controls_survival_120s"', 'check_credential("ENIGMA_DIAG_KEY"',
+                                     'rmark("aws_first_event"', "dup = resubmit_last()", 'observe("aws_survival_120s"', 'rcheck("railway_marker", "before_railway"',
+                                     "/api/v1/health", 'rmark("after_railway"', 'observe("railway_survival_120s"', 'verdict("overall", "PASS"')]
     assert order == sorted(order)
-    assert 'verdict("railway_marker", "INCONCLUSIVE"' in text                                      # no Railway request without an acknowledged AWS marker
+    # no secret is read before (or during) the offline idle baseline: the shared cell only DEFINES functions
+    cells = code(N1)
+    idle = next(i for i, c in enumerate(cells) if 'observe("idle_10min"' in c)
+    assert not any(re.search(r"^(check_credential|get_credential|rmark|rcheck)\(", c, re.M) for c in cells[:idle + 1])
+    # the credential preflight cell is re-runnable on its own: it refreshes only the credential cache
+    pre = next(c for c in cells if 'check_credential("ENIGMA_DIAG_KEY"' in c)
+    assert 'refresh_credentials("ENIGMA_DIAG_KEY")' in pre and "observe(" not in pre and "ATTEMPT =" not in pre
 
 
 def test_notebook_02_never_contacts_enigma():
     text = "\n".join(code(N2))
-    assert "railway.app" not in text and "ENIGMA_RUNTIME_TOKEN" not in text and "enigma_connector" not in text
+    assert "railway.app" not in text and 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "enigma_connector" not in text
+    assert 'VALIDATION_MODE = "standalone"' in code(N2)[0]                                           # Mode A by default: no secret needed
+    mode = next(c for c in code(N2) if "REMOTE_ENABLED = VALIDATION_MODE ==" in c)
+    assert mode.index("if REMOTE_ENABLED:") < mode.index('check_credential("ENIGMA_DIAG_KEY"') < mode.index('verdict("remote_ready", "PASS", f"Mode B')
+    assert text.index('verdict("remote_ready"') < text.index('require("remote_ready")') < text.index("urllib.request.urlopen(WHEEL_URL")   # Mode B: AWS before GPU work
+    assert '"mode": VALIDATION_MODE' in code(N2)[0]
     assert "server.stop()" in text and "p.poll() is None" in text                                  # build-5 stop() only while the leader is unreaped
 
 
@@ -73,6 +88,13 @@ def test_notebook_03_is_gated_supervised_ordered_and_requires_a_real_job():
     assert '(stats.get("jobs_done") or 0) >= 1' in text and "run_stage(" in text and "serverctl.safe_stop(server)" in text
     assert '"--gpu-interval", "1.0", "--vllm-interval", "2.0", "--upload-interval", "5.0"' in text
     assert gen.ENIGMA_REV in text
+    # both credentials validated independently, durable AWS ack, then EVIDENCE of the cutover (not a boolean), all before the wheel download
+    order = [text.index(k) for k in ('check_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")', 'check_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")',
+                                     "dup = resubmit_last()", 'verdict("production_migration"', "urllib.request.urlopen(WHEEL_URL")]
+    assert order == sorted(order)
+    assert 'store == "dynamodb" and auth == "cognito"' in text and "MIGRATION_COMPLETE" not in text
+    assert 'rcheck(f"stage_{name}_marker"' in text                                                  # a failed before-stage marker stops the stage
+    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' in text
 
 
 @pytest.mark.parametrize("name", [N1, N2, N3])
@@ -85,9 +107,11 @@ def test_no_notebook_embeds_or_prints_a_credential(name):
 
 
 def test_remote_markers_send_only_whitelisted_fields_and_ack_only_after_a_durable_write():
-    text = "\n".join(code(N1))
-    assert "_REMOTE_FIELDS = {" in text and 'body.get("stored", 0) + body.get("duplicates", 0) == 1' in text
-    assert 'get_secret("ENIGMA_DIAG_KEY")' in text and gen.DIAG_URL in text
+    shared = gen.REMOTE.replace("__DIAG__", gen.DIAG_URL).strip("\n")
+    for name in (N1, N2, N3):
+        assert shared in code(name), f"{name} must inline the shared credential cell unchanged"
+    assert "_REMOTE_FIELDS = {" in shared and "DIAGNOSTIC_PERSISTENCE_VERIFIED" in shared and "get_secret(name)" in shared
+    assert "_CRED_CACHE[name] = raw.strip()" in shared and '_DIAG["key"] = ""' not in shared                   # only validated values are cached
 
 
 def test_the_pinned_connector_revision_contains_serverctl_and_is_not_the_notebook_commit():

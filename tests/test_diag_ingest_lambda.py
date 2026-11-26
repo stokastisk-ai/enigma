@@ -77,8 +77,11 @@ def test_wrong_unknown_or_malformed_keys_get_the_same_401(ddb, key):
 def test_expired_and_revoked_keys_are_refused(ddb):
     put_key(ddb, kid="expired1", secret="E" * 43, expires_in=-10)
     put_key(ddb, kid="revoked1", secret="R" * 43, revoked=True)
-    assert call(ddb, [ev()], key="edx_expired1_" + "E" * 43)[0] == 401
-    assert call(ddb, [ev()], key="edx_revoked1_" + "R" * 43)[0] == 401
+    assert call(ddb, [ev()], key="edx_expired1_" + "E" * 43) == (401, {"error": "key_expired_or_revoked"})
+    assert call(ddb, [ev()], key="edx_revoked1_" + "R" * 43) == (401, {"error": "key_expired_or_revoked"})
+    # without the right secret, an expired/revoked key id is indistinguishable from an unknown one
+    assert call(ddb, [ev()], key="edx_expired1_" + "X" * 43) == (401, {"error": "unauthorized"})
+    assert call(ddb, [ev()], key="edx_revoked1_" + "X" * 43) == (401, {"error": "unauthorized"})
 
 
 def test_quota_is_atomic_and_exhaustion_is_429(ddb):

@@ -111,6 +111,6 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
 
     @app.get("/api/v1/health", tags=["meta"])
     def health():
-        return {"ok": True, "version": __version__, "store": s.store}
+        return {"ok": True, "version": __version__, "store": s.store, "auth": s.auth_provider}   # public, non-secret: lets the Kaggle notebook 03 gate verify the cutover
 
     return app

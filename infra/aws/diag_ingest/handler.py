@@ -126,8 +126,9 @@ def authenticate(ddb: Any, header: str, n_events: int, now: float) -> str:
                         ExpressionAttributeValues={":n": {"N": str(n_events)}, ":f": {"BOOL": False}, ":now": {"N": str(int(now))},
                                                    ":max": {"N": str(max_events)}, ":limit": {"N": str(max_events - n_events)}})
     except ddb.exceptions.ConditionalCheckFailedException:
+        # The secret already matched, so telling its holder WHY is no oracle for anyone else; unknown/wrong keys still get the uniform 401 above.
         revoked = item.get("revoked", {}).get("BOOL") or int(item["expires_at"]["N"]) <= now
-        raise Reject(401, "unauthorized") if revoked else Reject(429, "quota_exhausted")
+        raise Reject(401, "key_expired_or_revoked") if revoked else Reject(429, "quota_exhausted")
     return kid
 
 
@@ -171,6 +172,11 @@ def handle(event: dict, ddb: Any, now: float | None = None) -> dict:
 
 
 _DDB = None
+if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    # Create the client during the INIT phase (which runs with burst CPU): measured 2026-11-27, creating it inside the first invocation at 128 MB took
+    # ~4.6 s and one cold request hit the function timeout. Tests import this module without it.
+    import boto3
+    _DDB = boto3.client("dynamodb")
 
 
 def lambda_handler(event: dict, context: Any) -> dict:

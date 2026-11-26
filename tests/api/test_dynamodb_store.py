@@ -502,7 +502,8 @@ def test_create_app_builds_a_dynamodb_store_from_settings_and_serves_requests(dd
     s = Settings(env="test", dev_auth=True, dev_jwt_secret=DEV_SECRET, cron_secret="c" * 32, store="dynamodb", ddb_table=TABLE)
     app = create_app(s)                                            # no store injected: the factory must build DynamoStore itself (moto-backed client)
     with TestClient(app, raise_server_exceptions=False) as c:
-        assert c.get("/api/v1/health").json()["store"] == "dynamodb"
+        hj = c.get("/api/v1/health").json()
+        assert hj["store"] == "dynamodb" and hj["auth"] == s.auth_provider        # notebook 03 gates on store + auth
         t = Tenant(c, "user_alice")
         assert t.workspace_id and c.get("/api/v1/app/workspaces", headers=t.h).json()["items"][0]["id"] == t.workspace_id
         assert isinstance(app.state.enigma.store, DynamoStore)
