@@ -7,7 +7,7 @@ Everything else (install, environment check, local vLLM inference, local measure
 Here the connector runs as a **separate supervised process**: its stdout, stderr, an fsynced event log and a `faulthandler` dump go to files, and its exit code or
 terminating signal is recorded by the notebook instead of being lost. Only one subsystem is enabled per stage, so a failure names the component that was running.
 
-Connector revision for these cells: **`4212ab7`** (`connector/` at this revision is what you must fetch; the API needs no change).
+Connector revision for these cells: **`c4e36a6`** (supersedes `4212ab7`: interval fallback, supervisor hardening, markers) (`connector/` at this revision is what you must fetch; the API needs no change).
 
 ## Stage sequence
 
@@ -59,7 +59,7 @@ Restart the kernel first if the previous revision was already imported.
 ```python
 from pathlib import Path
 import subprocess, sys, importlib
-REV = "4212ab7"
+REV = "c4e36a627de4680d14643dedce6bdb05ae135d39"
 repo = Path("/kaggle/working/enigma-acceptance-source")
 if not repo.exists():
     subprocess.run(["git", "clone", "https://github.com/stokastisk-ai/enigma.git", str(repo)], check=True)

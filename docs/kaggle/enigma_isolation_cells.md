@@ -55,7 +55,7 @@ mark("prelude", python=platform.python_version())
 ```python
 import subprocess, sys
 from pathlib import Path
-REV = "PINNED_REVISION"
+REV = "c4e36a627de4680d14643dedce6bdb05ae135d39"
 repo = Path("/kaggle/working/enigma-acceptance-source")
 if not repo.exists():
     subprocess.run(["git", "clone", "-q", "https://github.com/stokastisk-ai/enigma.git", str(repo)], check=True)
