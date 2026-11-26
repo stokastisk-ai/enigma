@@ -25,11 +25,12 @@ import sys
 import threading
 import time
 
-from .config import Config, ConfigError
+from .config import Config, ConfigError, finite_number
 from .diag import NULL_DIAG, DiagLog, FaultHandler
 from .gpu import NvmlSampler, NvmlUnavailable
 from .http import ApiClient, ApiError, AuthError
 from .identity import collect_sdk_identity
+from .localnet import ensure_loopback_bypass
 from .jobs import StokastiskLlm
 from .mock import MockGpu, MockLlm, MockVllm
 from .runner import FEATURES, Connector
@@ -85,10 +86,22 @@ def _summary(stage: str, code: int, c: Connector | None, extra: dict | None = No
     print(json.dumps(out), flush=True)
 
 
+def offline_interval(stage: str, a: argparse.Namespace) -> float:
+    """Sampling interval for an offline stage. An omitted ``--gpu-interval``/``--vllm-interval`` (argparse default None) falls back to the
+    connector's normal Config default instead of reaching the probe loop as None (that raised TypeError: float - NoneType)."""
+    flag, attr = (a.gpu_interval, "gpu_interval_s") if stage == "nvml" else (a.vllm_interval, "vllm_interval_s")
+    return finite_number(attr, Config.__dataclass_fields__[attr].default if flag is None else flag)     # finite and > 0 (ConfigError is a ValueError)
+
+
 def _offline(stage: str, a: argparse.Namespace, diag: DiagLog, stop: threading.Event) -> int:
-    from .probe import run_local_nvml, run_local_vllm
+    from .probe import ProbeWorkerError, run_local_nvml, run_local_vllm
     from .gpu import local_gpu_forbidden
-    interval = a.gpu_interval if stage == "nvml" else a.vllm_interval
+    try:
+        interval = offline_interval(stage, a)
+    except ValueError as e:
+        print(f"configuration error: {e}", file=sys.stderr)
+        diag.emit("config_error", reason="interval")
+        return EXIT_CONFIG
     if stage == "nvml":
         if local_gpu_forbidden():
             print("refusing stage nvml: ENIGMA_FORBID_LOCAL_GPU=1 (real GPU work runs only on an authorised remote GPU host)", file=sys.stderr)
@@ -102,6 +115,8 @@ def _offline(stage: str, a: argparse.Namespace, diag: DiagLog, stop: threading.E
             return EXIT_REFUSED
         try:
             res = run_local_nvml(sampler, diag, stop, interval_s=interval, duration_s=a.duration)
+        except ProbeWorkerError as e:
+            return _probe_failed(stage, e)
         finally:
             sampler.close()
     else:
@@ -111,9 +126,19 @@ def _offline(stage: str, a: argparse.Namespace, diag: DiagLog, stop: threading.E
         if urlparse(url).hostname not in ("127.0.0.1", "localhost", "::1", "[::1]"):
             print("configuration error: the vLLM server must be on localhost: it is never exposed or tunnelled", file=sys.stderr)
             return EXIT_CONFIG
-        res = run_local_vllm(VllmSampler(url), diag, stop, interval_s=interval, duration_s=a.duration)
+        try:
+            res = run_local_vllm(VllmSampler(url), diag, stop, interval_s=interval, duration_s=a.duration)
+        except ProbeWorkerError as e:
+            return _probe_failed(stage, e)
     _summary(stage, EXIT_OK, None, {"offline": True, "network_to_enigma": False, "result": res})
     return EXIT_OK
+
+
+def _probe_failed(stage: str, e: Exception) -> int:
+    """A crashed probe worker is a FAILED diagnostic: non-zero exit and a summary that says so (never 'exit_code 0' with partial counts)."""
+    print(f"stage {stage}: {e}", file=sys.stderr)
+    _summary(stage, EXIT_FATAL, None, {"offline": True, "network_to_enigma": False, "fatal": getattr(e, "error_type", type(e).__name__)})
+    return EXIT_FATAL
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,8 +158,18 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--faulthandler-log", default=None, help="file that receives every thread's stack on a fatal signal")
     g.add_argument("--hang-dump-s", type=float, default=0.0, help="also dump all thread stacks this often (finds hangs)")
     a = ap.parse_args(argv)
+    try:                                                                           # 0 keeps its meaning: run until SIGTERM/SIGINT (or register-only exit)
+        a.duration = finite_number("--duration", a.duration, maximum=86400.0, allow_minimum=True)
+        a.hang_dump_s = finite_number("--hang-dump-s", a.hang_dump_s, maximum=86400.0, allow_minimum=True)
+        for flag in ("gpu_interval", "vllm_interval", "upload_interval"):
+            if getattr(a, flag) is not None:
+                setattr(a, flag, finite_number("--" + flag.replace("_", "-"), getattr(a, flag)))
+    except ConfigError as e:
+        print(f"configuration error: {e}", file=sys.stderr)
+        return EXIT_CONFIG
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    ensure_loopback_bypass()                                                       # this process only: loopback vLLM traffic never goes through a proxy
     diag = DiagLog(a.diag_log) if a.diag_log else NULL_DIAG
     fh = FaultHandler(a.faulthandler_log, a.hang_dump_s) if a.faulthandler_log else None
     stop = threading.Event()
@@ -198,6 +233,16 @@ def main(argv: list[str] | None = None) -> int:
         c.spool.cleanup_if_empty()
         code = EXIT_FATAL if c.fatal else EXIT_OK
         return code
+    except SystemExit as e:                                                        # e.g. build() refusing a forbidden local GPU
+        if isinstance(e.code, int):
+            code = e.code
+        else:
+            print(e.code, file=sys.stderr)
+            code = EXIT_REFUSED
+        return code
+    except BaseException:                                                          # the log must never say exit 0 while the process dies with a traceback
+        code = EXIT_FATAL
+        raise
     finally:
         diag.emit("process_exit", code=code)
         if c is not None or a.stage not in OFFLINE_STAGES:
