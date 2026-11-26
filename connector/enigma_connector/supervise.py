@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -36,6 +37,7 @@ class ConnectorProcess:
         self._fhs: list[Any] = []
         self.sent_signals: list[str] = []                       # evidence: every signal this supervisor actually delivered
         self.refused_signals: list[dict[str, Any]] = []         # evidence: every signal it refused to deliver, and why
+        self._stop_lock = threading.Lock()                      # stop() is strictly serial: Popen.poll() returns None while ANOTHER thread is reaping the child
 
     def __repr__(self) -> str:                                  # no env, no args: nothing secret can leak through a print()
         return f"<ConnectorProcess pid={getattr(self.proc, 'pid', None)} running={self.running}>"
@@ -73,20 +75,21 @@ class ConnectorProcess:
             return None
 
     def stop(self, grace_s: float = 10.0, kill_after_s: float = 5.0) -> dict[str, Any]:
-        """SIGTERM -> wait ``grace_s`` -> SIGKILL -> wait ``kill_after_s``. Only this child's own process group is signalled."""
-        escalated = False
-        if self.running:
-            self._signal(signal.SIGTERM)
-            if self.wait(grace_s) is None:
-                escalated = True
-                self._signal(signal.SIGKILL)
-                self.wait(kill_after_s)
-        rep = self.status()
-        rep["escalated_to_sigkill"] = escalated
-        rep["signals_sent"] = list(self.sent_signals)
-        rep["signals_refused"] = list(self.refused_signals)
-        self._close_files()
-        return rep
+        """SIGTERM -> wait ``grace_s`` -> SIGKILL -> wait ``kill_after_s``. Only this child's own process group is signalled. Safe to call repeatedly and concurrently."""
+        with self._stop_lock:
+            escalated = False
+            if self.running:
+                self._signal(signal.SIGTERM)
+                if self.wait(grace_s) is None:
+                    escalated = True
+                    self._signal(signal.SIGKILL)
+                    self.wait(kill_after_s)
+            rep = self.status()
+            rep["escalated_to_sigkill"] = escalated
+            rep["signals_sent"] = list(self.sent_signals)
+            rep["signals_refused"] = list(self.refused_signals)
+            self._close_files()
+            return rep
 
     def _signal(self, sig: int) -> bool:
         """Signal the child's own process group, or nothing. Returns True only if a signal was actually sent.

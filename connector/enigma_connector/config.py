@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import socket
@@ -12,6 +13,29 @@ _TOKEN = re.compile(r"^enig_rt_[a-z0-9]{8}_[A-Za-z0-9_-]{43}$")
 
 class ConfigError(ValueError):
     pass
+
+
+def finite_number(name: str, value: object, *, minimum: float = 0.0, maximum: float = 3600.0, allow_minimum: bool = False) -> float:
+    """``value`` as a float that is finite and within (minimum, maximum] (or [minimum, maximum] with ``allow_minimum``). Rejects NaN, +/-inf and bools."""
+    if isinstance(value, bool):
+        raise ConfigError(f"{name} must be a number, got {value!r}")
+    try:
+        v = float(value)                                                                   # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ConfigError(f"{name} must be a number, got {value!r}") from None
+    low_ok = v >= minimum if allow_minimum else v > minimum
+    if not math.isfinite(v) or not low_ok or v > maximum:
+        raise ConfigError(f"{name} must be a finite number in {'[' if allow_minimum else '('}{minimum:g}, {maximum:g}], got {value!r}")
+    return v
+
+
+# (attribute, minimum, maximum, minimum allowed). Every cadence and timeout the connector sleeps or waits on.
+INTERVAL_LIMITS: tuple[tuple[str, float, float, bool], ...] = (
+    ("gpu_interval_s", 0.0, 3600.0, False), ("vllm_interval_s", 0.0, 3600.0, False), ("upload_interval_s", 0.0, 3600.0, False),
+    ("heartbeat_interval_s", 0.0, 3600.0, False), ("claim_poll_s", 0.01, 60.0, True), ("claim_poll_idle_s", 0.0, 60.0, True),
+    ("claim_hot_window_s", 0.0, 3600.0, True), ("flush_interval_s", 0.0, 60.0, False), ("keepalive_s", 0.0, 3600.0, False),
+    ("request_timeout_s", 0.0, 600.0, False), ("stream_read_timeout_s", 0.0, 3600.0, False),
+)
 
 
 @dataclass
@@ -51,8 +75,8 @@ class Config:
             raise ConfigError("plain http is only allowed for localhost; use https for a remote Enigma API")
         if not _TOKEN.match(self.token or ""):
             raise ConfigError("ENIGMA_RUNTIME_TOKEN is missing or malformed (expected enig_rt_<8>_<43>)")
-        if not (0.01 <= self.claim_poll_s <= 60) or not (0 <= self.claim_poll_idle_s <= 60) or not (0 <= self.claim_hot_window_s <= 3600):
-            raise ConfigError("claim_poll_s must be 0.01-60, claim_poll_idle_s 0-60, claim_hot_window_s 0-3600")
+        for attr, lo, hi, lo_ok in INTERVAL_LIMITS:                                     # finite, positive (or explicitly allowed zero), bounded
+            setattr(self, attr, finite_number(attr, getattr(self, attr), minimum=lo, maximum=hi, allow_minimum=lo_ok))
         if self.mode not in ("stokastisk", "mock"):
             raise ConfigError("mode must be 'stokastisk' or 'mock'")
         lv = urlparse(self.vllm_url)
@@ -69,9 +93,8 @@ class Config:
                      instance_id=e.get("ENIGMA_INSTANCE", f"{socket.gethostname()[:30]}-{os.getpid()}".replace(" ", "-")),
                      vllm_url=e.get("ENIGMA_VLLM_URL", "http://127.0.0.1:8000"), served_model=e.get("ENIGMA_SERVED_MODEL", ""),
                      mode=e.get("ENIGMA_MODE", "stokastisk"), spool_dir=e.get("ENIGMA_SPOOL_DIR", ""))
-        if e.get("ENIGMA_HEARTBEAT_S"):
-            cfg.heartbeat_interval_s = float(e["ENIGMA_HEARTBEAT_S"])           # keep it well under the server's online threshold (default 30 s)
-        for env_key, attr in (("ENIGMA_CLAIM_POLL_S", "claim_poll_s"), ("ENIGMA_CLAIM_POLL_IDLE_S", "claim_poll_idle_s"), ("ENIGMA_CLAIM_HOT_WINDOW_S", "claim_hot_window_s")):
+        for env_key, attr in (("ENIGMA_HEARTBEAT_S", "heartbeat_interval_s"),            # keep heartbeats well under the server's online threshold (default 30 s)
+                              ("ENIGMA_CLAIM_POLL_S", "claim_poll_s"), ("ENIGMA_CLAIM_POLL_IDLE_S", "claim_poll_idle_s"), ("ENIGMA_CLAIM_HOT_WINDOW_S", "claim_hot_window_s")):
             if e.get(env_key):
                 try:
                     setattr(cfg, attr, float(e[env_key]))

@@ -203,3 +203,164 @@ def test_marker_log_survives_an_unwritable_path_and_redacts(tmp_path):
     out: list[str] = []
     rec = MarkerLog(blocker / "sub" / "markers.jsonl", echo=lambda *a, **k: out.append(a[0])).mark("x", note=f"token={TOKEN}")
     assert TOKEN not in json.dumps(rec) and out and TOKEN not in out[0]
+
+
+# ------------------------------------------------------------------------------------------------ finite interval / duration validation (review 2026-11-26)
+import math                                                                          # noqa: E402
+import threading                                                                     # noqa: E402
+
+from enigma_connector.config import INTERVAL_LIMITS, ConfigError, finite_number      # noqa: E402
+from enigma_connector.probe import ProbeWorkerError, run_local_nvml, run_local_vllm  # noqa: E402
+from enigma_connector.diag import DiagLog                                            # noqa: E402
+from enigma_connector.stage_runner import evaluate                                   # noqa: E402
+
+BAD = [0.0, -1.0, math.nan, math.inf, -math.inf, "abc", True, None]
+
+
+def _cfg(**over):
+    return Config(api_url="https://api.test", token=TOKEN, instance_id="t", **over)
+
+
+def test_notebook_intervals_and_defaults_are_valid():
+    c = _cfg(gpu_interval_s=1.0, vllm_interval_s=2.0, upload_interval_s=5.0).validate()
+    assert (c.gpu_interval_s, c.vllm_interval_s, c.upload_interval_s, c.heartbeat_interval_s) == (1.0, 2.0, 5.0, 10.0)
+
+
+@pytest.mark.parametrize("attr", [a for a, *_ in INTERVAL_LIMITS])
+@pytest.mark.parametrize("bad", [v for v in BAD if v is not None])
+def test_every_interval_rejects_nonfinite_nonpositive_and_non_numbers(attr, bad):
+    lo_ok = next(ok for a, _, _, ok in INTERVAL_LIMITS if a == attr)
+    if lo_ok and bad == 0.0:
+        pytest.skip(f"{attr}: 0 is a documented, allowed value")
+    with pytest.raises(ConfigError):
+        _cfg(**{attr: bad}).validate()
+
+
+def test_allowed_zero_values_keep_their_meaning():
+    c = _cfg(claim_poll_idle_s=0.0, claim_hot_window_s=0.0).validate()
+    assert c.claim_poll_idle_s == 0.0 and c.claim_hot_window_s == 0.0
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-5", "0", "x"])
+def test_environment_heartbeat_must_be_finite_positive(raw):
+    with pytest.raises(ConfigError):
+        Config.from_env({"ENIGMA_API_URL": "https://api.test", "ENIGMA_RUNTIME_TOKEN": TOKEN, "ENIGMA_INSTANCE": "t", "ENIGMA_HEARTBEAT_S": raw})
+
+
+@pytest.mark.parametrize("stage,flag", [("nvml", "gpu_interval"), ("vllm", "vllm_interval")])
+@pytest.mark.parametrize("bad", [0.0, -1.0, math.nan, math.inf])
+def test_offline_interval_rejects_zero_negative_nan_and_infinity(stage, flag, bad):
+    a = argparse.Namespace(gpu_interval=None, vllm_interval=None)
+    setattr(a, flag, bad)
+    with pytest.raises(ValueError):
+        cli.offline_interval(stage, a)
+
+
+@pytest.mark.parametrize("args", [["--duration", "inf"], ["--duration", "nan"], ["--duration", "-1"], ["--hang-dump-s", "inf"],
+                                  ["--gpu-interval", "inf"], ["--vllm-interval", "nan"], ["--upload-interval", "0"]])
+def test_cli_rejects_bad_durations_and_intervals_before_doing_anything(args, tmp_path):
+    assert cli.main(["--stage", "vllm", "--diag-log", str(tmp_path / "d.jsonl"), *args]) == cli.EXIT_CONFIG
+    assert not (tmp_path / "d.jsonl").exists()                                       # refused before the diag log was even opened
+
+
+def test_zero_duration_still_means_register_only_or_indefinite():
+    assert finite_number("--duration", 0.0, maximum=86400.0, allow_minimum=True) == 0.0
+
+
+def test_run_stage_rejects_nonfinite_duration_poll_and_grace(tmp_path):
+    for kw in ({"duration": math.inf}, {"duration": math.nan}, {"poll_s": 0}, {"poll_s": math.inf}, {"grace_s": -1}):
+        with pytest.raises(ValueError):
+            run_stage("vllm", workdir=tmp_path, echo=quiet, **kw)
+
+
+# ------------------------------------------------------------------------------------------------ probe worker failures must not look like success
+class ExplodingSampler:
+    last_error = None
+
+    def sample(self):
+        raise RuntimeError("worker blew up")
+
+    def inventory(self):
+        return []
+
+
+def test_vllm_probe_worker_crash_is_raised_and_logged(tmp_path):
+    d = DiagLog(tmp_path / "p.jsonl")
+    with pytest.raises(ProbeWorkerError) as e:
+        run_local_vllm(ExplodingSampler(), d, threading.Event(), interval_s=0.01, duration_s=0.2)
+    assert e.value.error_type == "RuntimeError"
+    ev = [json.loads(x) for x in (tmp_path / "p.jsonl").read_text().splitlines()]
+    assert any(x["event"] == "probe_worker_crashed" and x["error"] == "RuntimeError" for x in ev)
+    assert not any(x["event"] == "vllm_probe_done" for x in ev)
+
+
+def test_nvml_probe_worker_crash_outside_the_sample_call_is_raised(tmp_path):
+    class BadDiag(DiagLog):
+        def emit(self, event, **f):
+            if event == "nvml_sample":
+                raise OSError("diag write path exploded")
+            super().emit(event, **f)
+
+    class OkNvml:
+        def inventory(self):
+            return []
+
+        def sample(self):
+            return []
+    with pytest.raises(ProbeWorkerError):
+        run_local_nvml(OkNvml(), BadDiag(tmp_path / "n.jsonl"), threading.Event(), interval_s=0.01, duration_s=0.2)
+
+
+def test_cli_returns_nonzero_and_logs_the_same_code_when_the_probe_worker_crashes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "VllmSampler", lambda url: ExplodingSampler())
+    monkeypatch.setenv("ENIGMA_VLLM_URL", "http://127.0.0.1:9")
+    rc = cli.main(["--stage", "vllm", "--duration", "0.3", "--diag-log", str(tmp_path / "d.jsonl")])
+    assert rc == cli.EXIT_FATAL
+    ev = [json.loads(x) for x in (tmp_path / "d.jsonl").read_text().splitlines()]
+    assert ev[-1]["event"] == "process_exit" and ev[-1]["code"] == cli.EXIT_FATAL
+    summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert summary["exit_code"] == cli.EXIT_FATAL and summary["fatal"] == "RuntimeError"
+
+
+def test_process_exit_is_never_logged_as_zero_when_main_raises(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(cli, "_offline", boom)
+    with pytest.raises(RuntimeError):
+        cli.main(["--stage", "vllm", "--duration", "0.1", "--diag-log", str(tmp_path / "d.jsonl")])
+    ev = [json.loads(x) for x in (tmp_path / "d.jsonl").read_text().splitlines()]
+    assert ev[-1] == {**ev[-1], "event": "process_exit", "code": cli.EXIT_FATAL}
+
+
+def test_evaluate_fails_when_the_logged_exit_code_disagrees_with_reality():
+    ev = [{"event": "process_start"}, {"event": "vllm_scrape", "got": True}, {"event": "process_exit", "code": 0}]
+    checks = {n: ok for n, ok, _ in evaluate("vllm", ev, {"stage": "vllm", "exit_code": 0}, {"returncode": 1}, 0.0)}
+    assert checks["logged exit code matches the real exit code"] is False and checks["child exited by itself with code 0"] is False
+
+
+def test_evaluate_fails_an_offline_stage_whose_worker_crashed():
+    ev = [{"event": "process_start"}, {"event": "probe_worker_crashed", "error": "TypeError"}, {"event": "process_exit", "code": 1}]
+    checks = {n: ok for n, ok, _ in evaluate("vllm", ev, None, {"returncode": 1}, 0.0)}
+    assert checks["probe worker did not crash"] is False
+
+
+def test_run_stage_end_to_end_reports_a_crashing_probe_as_fail(tmp_path):
+    """The old (pre-fix) symptom: TypeError in the probe thread while the child still exited 0. Now the stage itself FAILS."""
+    res = run_stage("vllm", vllm_url="http://127.0.0.1:9", duration=0.5, workdir=tmp_path, poll_s=0.2, echo=quiet, extra_args=("--vllm-interval", "nan"))
+    assert res["passed"] is False and res["exit"]["returncode"] == cli.EXIT_CONFIG
+
+
+# ------------------------------------------------------------------------------------------------ concurrent stop()
+def test_concurrent_stop_calls_send_exactly_one_sigterm_and_harm_nothing(tmp_path, sentinel):
+    p = ConnectorProcess([], dict(os.environ), tmp_path / "proc", command=[sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"])
+    p.start()
+    time.sleep(0.3)
+    reports: list[dict] = []
+    threads = [threading.Thread(target=lambda: reports.append(p.stop(grace_s=5, kill_after_s=2))) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+    assert len(reports) == 4 and p.sent_signals == ["SIGTERM"] and p.refused_signals == []
+    assert all(r["returncode"] == -signal.SIGTERM for r in reports)
+    assert _alive(sentinel.pid)

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .cli import OFFLINE_STAGES, STAGES
+from .config import finite_number
 from .diag import redact
 from .supervise import ConnectorProcess
 
@@ -122,10 +123,16 @@ def _count(ev: list[dict], name: str, **match: Any) -> int:
 def evaluate(stage: str, ev: list[dict], summary: dict | None, status: dict, duration: float, *, mode: str = "stokastisk") -> list[Check]:
     """Explicit pass/fail conditions. Every check names what it looked at, so a failure says which component and which last operation."""
     rc = status.get("returncode")
+    logged = ev[-1].get("code") if ev and ev[-1].get("event") == "process_exit" else None
     checks: list[Check] = [("child exited by itself with code 0", rc == 0, f"returncode={rc} signal={status.get('killed_by_signal')} uptime_s={status.get('uptime_s')}"),
-                           ("diagnostic log reached 'process_exit'", bool(ev) and ev[-1].get("event") == "process_exit", f"last_event={(ev[-1].get('event') if ev else None)}")]
+                           ("diagnostic log reached 'process_exit'", bool(ev) and ev[-1].get("event") == "process_exit", f"last_event={(ev[-1].get('event') if ev else None)}"),
+                           ("logged exit code matches the real exit code", logged is not None and logged == rc, f"process_exit.code={logged} returncode={rc}")]
+    if summary is not None and "exit_code" in summary:
+        checks.append(("stdout summary exit code matches the real exit code", summary.get("exit_code") == rc, f"summary.exit_code={summary.get('exit_code')} returncode={rc}"))
     if stage in OFFLINE_STAGES:
         checks.append(("no network to Enigma was used", not any(e.get("event") in ("register_ok", "heartbeat_ok", "upload_ok", "claim_ok") for e in ev), "offline stage"))
+        crashed = _count(ev, "probe_worker_crashed")
+        checks.append(("probe worker did not crash", crashed == 0, f"{crashed} probe_worker_crashed"))
     if stage == "nvml":
         n = _count(ev, "nvml_sample")
         checks += [(f"NVML sampled repeatedly from a background thread (>= {max(5, int(duration * 0.7))})", n >= max(5, int(duration * 0.7)), f"{n} samples"),
@@ -169,7 +176,9 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
               python_env: dict[str, str] | None = None, markers: MarkerLog | None = None) -> dict[str, Any]:
     if stage not in {*STAGES, *OFFLINE_STAGES}:
         raise ValueError(f"unknown stage {stage!r}; choose one of {sorted({*STAGES, *OFFLINE_STAGES})}")
-    dur = float(DEFAULT_DURATION[stage] if duration is None else duration)
+    dur = finite_number("duration", DEFAULT_DURATION[stage] if duration is None else duration, maximum=86400.0, allow_minimum=True)   # 0 = register-only
+    poll_s = finite_number("poll_s", poll_s, maximum=600.0)
+    grace_s = finite_number("grace_s", grace_s, maximum=3600.0, allow_minimum=True)
     needs_net = stage not in OFFLINE_STAGES
     out_dir = Path(workdir) / f"{stage}-{uuid.uuid4().hex[:6]}"
     mk = markers if markers is not None else MarkerLog(Path(workdir) / "markers.jsonl", echo=echo)
