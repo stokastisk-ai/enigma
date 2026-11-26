@@ -209,7 +209,7 @@ def test_oversized_vllm_metrics_are_refused_not_buffered(monkeypatch):
     class Resp(io.BytesIO):
         def __enter__(self): return self
         def __exit__(self, *a): return False
-    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout=0: Resp(b"#" * (MAX_METRICS_BYTES + 10)))
+    monkeypatch.setattr("enigma_connector.vllm_metrics.open_loopback", lambda url, timeout=0: Resp(b"#" * (MAX_METRICS_BYTES + 10)))
     s = VllmSampler("http://127.0.0.1:8000")
     assert s.sample() is None and s.last_error == "ValueError"
 

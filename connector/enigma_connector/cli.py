@@ -30,6 +30,7 @@ from .diag import NULL_DIAG, DiagLog, FaultHandler
 from .gpu import NvmlSampler, NvmlUnavailable
 from .http import ApiClient, ApiError, AuthError
 from .identity import collect_sdk_identity
+from .localnet import ensure_loopback_bypass
 from .jobs import StokastiskLlm
 from .mock import MockGpu, MockLlm, MockVllm
 from .runner import FEATURES, Connector
@@ -168,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONFIG
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    ensure_loopback_bypass()                                                       # this process only: loopback vLLM traffic never goes through a proxy
     diag = DiagLog(a.diag_log) if a.diag_log else NULL_DIAG
     fh = FaultHandler(a.faulthandler_log, a.hang_dump_s) if a.faulthandler_log else None
     stop = threading.Event()

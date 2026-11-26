@@ -13,6 +13,8 @@ from typing import Any
 
 from prometheus_client.parser import text_string_to_metric_families
 
+from .localnet import open_loopback
+
 GAUGES = {"num_requests_running": "vllm:num_requests_running", "num_requests_waiting": "vllm:num_requests_waiting"}
 COUNTERS = {"prompt_tokens_total": "vllm:prompt_tokens", "generation_tokens_total": "vllm:generation_tokens", "preemptions_total": "vllm:num_preemptions"}
 HISTS = {"ttft_hist": "vllm:time_to_first_token_seconds", "e2e_hist": "vllm:e2e_request_latency_seconds", "itl_hist": "vllm:inter_token_latency_seconds"}
@@ -82,7 +84,7 @@ class VllmSampler:
         self.last_error: str | None = None
 
     def _http(self) -> str:
-        with urllib.request.urlopen(self.url, timeout=self.timeout) as r:      # noqa: S310 - localhost only (Config.validate)
+        with open_loopback(self.url, timeout=self.timeout) as r:                 # localhost only, never through a proxy (see localnet)
             raw = r.read(MAX_METRICS_BYTES + 1)
         if len(raw) > MAX_METRICS_BYTES:
             raise ValueError("metrics response too large")

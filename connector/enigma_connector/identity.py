@@ -17,6 +17,8 @@ import re
 import urllib.request
 from typing import Any, Callable
 
+from .localnet import open_loopback
+
 _VERSIONISH = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LOOPBACK = ("127.0.0.1", "localhost", "[::1]", "::1")
@@ -72,7 +74,7 @@ def fetch_vllm_version(base_url: str, timeout: float = 3.0) -> str | None:
     if u.hostname not in _LOOPBACK:
         return None
     try:
-        with urllib.request.urlopen(base_url.rstrip("/") + "/version", timeout=timeout) as r:      # noqa: S310 - loopback only (checked above)
+        with open_loopback(base_url.rstrip("/") + "/version", timeout=timeout) as r:      # loopback only (checked above), never through a proxy
             raw = r.read(MAX_VERSION_BYTES + 1)
         if len(raw) > MAX_VERSION_BYTES:
             return None
