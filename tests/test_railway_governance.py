@@ -32,9 +32,9 @@ def test_api_image_is_python313_cpu_only_nonroot_and_binds_port():
     assert "--factory" in API_DF and "enigma_api.main:create_app" in API_DF
     assert "ENIGMA_DEV_AUTH" not in API_DF and "--forwarded-allow-ips" not in API_DF
     reqs = (ROOT / "apps/api/requirements-railway.txt").read_text().lower()
-    for banned in ("torch", "vllm", "stokastisk", "nvidia", "cuda", "pynvml", "boto3", "moto", "mangum"):
+    for banned in ("torch", "vllm", "stokastisk", "nvidia", "cuda", "pynvml", "moto", "mangum"):      # no GPU/inference stack, no test emulator, no Lambda adapter
         assert banned not in re.sub(r"#.*", "", reqs), banned
-    assert "psycopg" in reqs and "uvicorn==" in reqs
+    assert "psycopg" in reqs and "uvicorn==" in reqs and "boto3==" in reqs                               # boto3 (pinned) for the DynamoDB store
 
 
 def test_web_image_uses_repo_root_context_standalone_and_pins_node():

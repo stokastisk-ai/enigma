@@ -2,7 +2,9 @@
 
 * Runtime plane: ``Authorization: Bearer enig_rt_<8-char prefix>_<secret>``. Only sha256(secret) is stored.
   A token resolves to exactly one runtime (and therefore one workspace + project); nothing in a request body can widen that.
-* User plane: a Neon Managed Better Auth JWT (EdDSA, JWKS of the Auth URL, issuer and audience = its origin). Every other algorithm is refused.
+* User plane: exactly ONE configured provider. ``cognito``: an Amazon Cognito user-pool JWT (RS256, issuer pinned to the pool, token_use and
+  app client enforced). ``neon`` (rollback path only): a Neon Managed Better Auth JWT (EdDSA, issuer and audience = the Auth URL origin).
+  A token of the other provider's algorithm is refused. Every other algorithm is refused.
   A dev-only HS256 mode exists for the local mock E2E; Settings.validate_for_startup() forbids it in production / on Railway.
 """
 from __future__ import annotations
@@ -86,8 +88,8 @@ def verify_runtime_token(store: Any, token: str, now: datetime | None = None) ->
 # ---------------------------------------------------------------- user tokens
 @dataclass(frozen=True)
 class UserIdentity:
-    user_id: str          # namespaced subject: Neon `neon:<sub>`; dev tokens use their own `sub`
-    auth: str             # "neon" | "dev"
+    user_id: str          # namespaced subject: Cognito `cognito:<sub>`, Neon `neon:<sub>`; dev tokens use their own `sub`
+    auth: str             # "cognito" | "neon" | "dev"
 
 
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
@@ -167,6 +169,30 @@ class UserVerifier:
         self._resolver = key_resolver
         self._jwks_fetch, self._clock = jwks_fetch, clock
         self._neon_keys: JwksCache | None = None
+        self._cognito_keys: JwksCache | None = None
+
+    def _verify_cognito(self, token: str) -> "UserIdentity":
+        """Cognito user-pool JWT: RS256 only, issuer pinned to the configured pool, exp/iat/sub required, ``token_use`` must be the configured one, and
+        the app client must be ours (access tokens carry ``client_id``, id tokens carry ``aud``). A token for another pool or client is refused.
+        Cognito marks an account usable only after e-mail verification (auto-verified attribute = email), so no separate claim is trusted here."""
+        unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
+        s = self.s
+        if not (s.cognito_issuer and s.cognito_app_client_id):
+            raise unauthorized
+        if self._resolver:
+            key = self._resolver(token)
+        else:
+            if self._cognito_keys is None:
+                self._cognito_keys = JwksCache(s.cognito_jwks_url, self._jwks_fetch, self._clock)
+            key = self._cognito_keys.key_for(jwt.get_unverified_header(token).get("kid"))
+        claims = jwt.decode(token, key, algorithms=["RS256"], issuer=s.cognito_issuer,
+                            options={"require": ["exp", "iat", "sub", "iss"], "verify_aud": False})
+        if claims.get("token_use") != s.cognito_token_use:
+            raise unauthorized
+        client = claims.get("aud") if s.cognito_token_use == "id" else claims.get("client_id")
+        if client != s.cognito_app_client_id:
+            raise unauthorized
+        return UserIdentity(f"cognito:{_valid_subject(claims['sub'])}", "cognito")
 
     def _verify_neon(self, token: str) -> "UserIdentity":
         """Neon Managed Better Auth JWT: EdDSA (Ed25519), 15-minute expiry. `iss` AND `aud` must equal the origin of the configured Auth URL, so a token from
@@ -206,7 +232,9 @@ class UserVerifier:
                     raise unauthorized
                 claims = jwt.decode(token, self.s.dev_jwt_secret, algorithms=["HS256"], audience="enigma-dev", options={"require": ["exp", "sub"]})
                 return UserIdentity(str(claims["sub"]), "dev")
-            if alg == "EdDSA":
+            if alg == "RS256" and self.s.auth_provider == "cognito":
+                return self._verify_cognito(token)
+            if alg == "EdDSA" and self.s.auth_provider == "neon":
                 return self._verify_neon(token)
             raise unauthorized
         except ApiError:
