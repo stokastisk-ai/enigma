@@ -1,4 +1,4 @@
-"""Copy the generated Kaggle diagnostic notebooks (docs/kaggle/diagnostics/) into the directory you run Kaggle notebooks from.
+"""Copy the generated Kaggle notebooks (01, 02, 03; build 5 only) (docs/kaggle/diagnostics/) into the directory you run Kaggle notebooks from.
 
     python3.13 scripts/sync_kaggle_notebooks.py --dest /path/to/notebooks
     ENIGMA_KAGGLE_NOTEBOOK_DIR=/path/to/notebooks python3.13 scripts/sync_kaggle_notebooks.py
@@ -20,8 +20,7 @@ import time
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "docs" / "kaggle" / "diagnostics"
-NAMES = ("enigma_kaggle_cpu_platform_baseline", "enigma_kaggle_cpu_connector_isolation", "stokastisk_kaggle_gpu_platform_baseline",
-         "stokastisk_kaggle_vllm_stability", "enigma_kaggle_registration_without_vllm", "enigma_stokastisk_qwen25_05b_final_integration")
+NAMES = ("01_enigma_kaggle_platform_aws_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_aws_integration")
 _KEY = re.compile(r"enig_rt_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}")
 
 

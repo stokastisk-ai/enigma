@@ -1,25 +1,16 @@
-"""docs/kaggle/enigma_isolation_cells.md is now an index of the generated notebooks; it must point at all six and carry no runnable cells."""
-from __future__ import annotations
-
+"""docs/kaggle/enigma_isolation_cells.md indexes the three generated notebooks; no runnable cells, no credentials, no build 6."""
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEXT = (ROOT / "docs" / "kaggle" / "enigma_isolation_cells.md").read_text()
-NOTEBOOKS = ("enigma_kaggle_cpu_platform_baseline", "enigma_kaggle_cpu_connector_isolation", "stokastisk_kaggle_gpu_platform_baseline",
-             "stokastisk_kaggle_vllm_stability", "enigma_kaggle_registration_without_vllm", "enigma_stokastisk_qwen25_05b_final_integration")
 
 
-def test_index_lists_all_six_notebooks_and_they_exist():
-    for n in NOTEBOOKS:
-        assert f"{n}.ipynb" in TEXT
-        assert (ROOT / "docs" / "kaggle" / "diagnostics" / f"{n}.ipynb").is_file()
+def test_index_lists_the_three_notebooks_and_they_exist():
+    for n in ("01_enigma_kaggle_platform_aws_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_aws_integration"):
+        assert f"{n}.ipynb" in TEXT and (ROOT / "docs" / "kaggle" / "diagnostics" / f"{n}.ipynb").is_file()
 
 
-def test_index_has_no_runnable_cells_and_no_credentials():
-    assert "```python" not in TEXT
-    assert not re.search(r"enig_rt_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}", TEXT)
-
-
-def test_index_states_the_methodology_correction():
-    assert "not** a CPU-only test" in TEXT and "PASS | FAIL | INCONCLUSIVE" in TEXT and "Missing files do not prove" in TEXT
+def test_index_is_build5_only_without_cells_or_credentials():
+    assert "```python" not in TEXT and "build 5" in TEXT
+    assert not re.search(r"(enig_rt|edx)_[a-z0-9]{8}_[A-Za-z0-9_-]{10,}", TEXT)

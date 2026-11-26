@@ -2,4 +2,5 @@
 # Adds the ASGI server and the PostgreSQL driver that requirements.txt omits.
 -r requirements.txt
 psycopg[binary]==3.3.9
+boto3==1.44.2
 uvicorn==0.54.0

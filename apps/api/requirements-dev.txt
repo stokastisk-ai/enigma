@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest==9.1.1
+
+# DynamoDB store tests: in-process emulator (moto), no AWS account or network
+moto[dynamodb]==5.2.5
