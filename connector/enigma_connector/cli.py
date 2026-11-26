@@ -85,10 +85,25 @@ def _summary(stage: str, code: int, c: Connector | None, extra: dict | None = No
     print(json.dumps(out), flush=True)
 
 
+def offline_interval(stage: str, a: argparse.Namespace) -> float:
+    """Sampling interval for an offline stage. An omitted ``--gpu-interval``/``--vllm-interval`` (argparse default None) falls back to the
+    connector's normal Config default instead of reaching the probe loop as None (that raised TypeError: float - NoneType)."""
+    flag, attr = (a.gpu_interval, "gpu_interval_s") if stage == "nvml" else (a.vllm_interval, "vllm_interval_s")
+    value = float(Config.__dataclass_fields__[attr].default if flag is None else flag)
+    if not value > 0:
+        raise ValueError(f"{attr} must be > 0, got {value}")
+    return value
+
+
 def _offline(stage: str, a: argparse.Namespace, diag: DiagLog, stop: threading.Event) -> int:
     from .probe import run_local_nvml, run_local_vllm
     from .gpu import local_gpu_forbidden
-    interval = a.gpu_interval if stage == "nvml" else a.vllm_interval
+    try:
+        interval = offline_interval(stage, a)
+    except ValueError as e:
+        print(f"configuration error: {e}", file=sys.stderr)
+        diag.emit("config_error", reason="interval")
+        return EXIT_CONFIG
     if stage == "nvml":
         if local_gpu_forbidden():
             print("refusing stage nvml: ENIGMA_FORBID_LOCAL_GPU=1 (real GPU work runs only on an authorised remote GPU host)", file=sys.stderr)

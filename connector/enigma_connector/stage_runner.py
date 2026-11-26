@@ -53,6 +53,56 @@ def system_snapshot(read: Callable[[str], str | None] = _read) -> dict[str, Any]
     return snap
 
 
+def process_identity(pid: int | None = None) -> dict[str, Any]:
+    """PID, parent PID, process group and session of ``pid`` (default: this process). Never raises; unknown values are None."""
+    out: dict[str, Any] = {"pid": os.getpid() if pid is None else pid}
+    for key, fn in (("pgid", os.getpgid), ("sid", os.getsid)):
+        try:
+            out[key] = fn(0 if pid is None else pid)
+        except OSError:
+            out[key] = None
+    if pid is None:
+        out["ppid"] = os.getppid()
+    return out
+
+
+class MarkerLog:
+    """Parent-side progress markers. Each marker is (1) appended to a JSONL file, flushed and fsynced, and (2) echoed as one flushed line.
+
+    Why both: after the Kaggle fatal sessions the VM's files were gone (a new session had to re-clone), but the cell outputs printed before the
+    failure WERE kept in the saved notebook. Markers carry host memory and process identities only; every value is redacted, no secret is ever passed."""
+
+    def __init__(self, path: str | os.PathLike[str] | None, *, echo: Callable[..., None] | None = None, read: Callable[[str], str | None] = _read):
+        self.path = None if path is None else Path(path)
+        self._echo, self._read = echo, read
+        if self.path is not None:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                self.path = None                                                        # unwritable: markers still reach the cell output
+
+    def mark(self, name: str, **fields: Any) -> dict[str, Any]:
+        snap = system_snapshot(self._read)
+        rec = redact({"marker": name, "t": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}Z",
+                      "self": process_identity(), "mem_available_mib": snap.get("mem_available_mib"), "cgroup_mib": snap.get("cgroup_current_mib"),
+                      "oom_kill": snap.get("oom_kill"), **fields})
+        line = json.dumps(rec, separators=(",", ":"), default=str)
+        if self.path is not None:
+            try:
+                with open(self.path, "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError:
+                pass                                                                    # evidence must never break the stage
+        if self._echo is not None:
+            try:
+                self._echo("MARK " + line, flush=True)
+            except TypeError:
+                self._echo("MARK " + line)
+        return rec
+
+
 # ------------------------------------------------------------------------------------------------ evaluation of a finished stage
 def _events(path: Path) -> list[dict]:
     out = []
@@ -116,12 +166,14 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
               tp: int = 1, max_model_len: int = 2048, duration: float | None = None, workdir: str | os.PathLike[str] = "/kaggle/working/enigma-diag",
               server: Any = None, mode: str = "stokastisk", extra_args: tuple[str, ...] = (), poll_s: float = 5.0, grace_s: float = 30.0,
               echo: Callable[..., None] = print, sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-              python_env: dict[str, str] | None = None) -> dict[str, Any]:
+              python_env: dict[str, str] | None = None, markers: MarkerLog | None = None) -> dict[str, Any]:
     if stage not in {*STAGES, *OFFLINE_STAGES}:
         raise ValueError(f"unknown stage {stage!r}; choose one of {sorted({*STAGES, *OFFLINE_STAGES})}")
     dur = float(DEFAULT_DURATION[stage] if duration is None else duration)
     needs_net = stage not in OFFLINE_STAGES
     out_dir = Path(workdir) / f"{stage}-{uuid.uuid4().hex[:6]}"
+    mk = markers if markers is not None else MarkerLog(Path(workdir) / "markers.jsonl", echo=echo)
+    mk.mark("stage_begin", stage=stage, dir=out_dir.name)
     pkg_parent = str(Path(__file__).resolve().parents[1])                                   # the child must import THIS connector code, not whatever is on its default path
     env = {**os.environ, "ENIGMA_VLLM_URL": vllm_url, "ENIGMA_MODE": mode, "ENIGMA_INSTANCE": f"diag-{uuid.uuid4().hex[:10]}",
            "ENIGMA_CLAIM_POLL_S": "1", "ENIGMA_CLAIM_POLL_IDLE_S": "5", "ENIGMA_CLAIM_HOT_WINDOW_S": "30", "ENIGMA_HEARTBEAT_S": "10",
@@ -131,7 +183,9 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
         if not api_url or token_getter is None:
             raise ValueError(f"stage {stage!r} talks to Enigma: api_url and token_getter are required")
         env["ENIGMA_API_URL"] = api_url
+        mk.mark("before_secret_retrieval", stage=stage)
         env["ENIGMA_RUNTIME_TOKEN"] = token_getter().strip()                          # lives in this env dict only until the child has been spawned
+        mk.mark("after_secret_retrieval", stage=stage, secret_present=bool(env["ENIGMA_RUNTIME_TOKEN"]))   # presence only: never the value or its length
     if model:
         env["ENIGMA_SERVED_MODEL"] = model
     args = ["--stage", stage, "--duration", str(dur), "--mode", mode, "--tp", str(tp), "--max-model-len", str(max_model_len), *extra_args]
@@ -139,8 +193,11 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
     del env
     base = system_snapshot()
     echo(f"[stage {stage}] starting supervised child, duration={dur:g}s, logs in {out_dir}")
+    mk.mark("before_spawn", stage=stage)
     pid = p.start()
+    mk.mark("after_spawn", stage=stage, child=process_identity(pid))
     t0, timeline = clock(), []
+    exit_marked = False
     try:
         while True:
             sleep(poll_s)
@@ -152,10 +209,17 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
                  f" last={ev_name} seq={None if not last else last.get('seq')} vllm_server={'up' if srv else ('DOWN' if srv is False else 'n/a')}"
                  f" mem_avail={snap.get('mem_available_mib')}MiB cgroup={snap.get('cgroup_current_mib')}/{snap.get('cgroup_limit_mib') or 'unlimited'}MiB oom_kill={snap.get('oom_kill')}")
             timeline.append({"t": round(el), "running": st["running"], "last": ev_name, "server_up": srv, **snap})
-            if not st["running"] or el > dur + grace_s:
+            if not st["running"]:
+                mk.mark("child_exit_observed", stage=stage, returncode=st["returncode"], signal=st["killed_by_signal"], last_event=ev_name)
+                exit_marked = True
+                break
+            if el > dur + grace_s:
                 break
     finally:
+        mk.mark("before_supervisor_cleanup", stage=stage, child_running=p.running)
         rep = p.stop(grace_s=10, kill_after_s=5)                                      # only ever signals this child's own process group
+        mk.mark("after_supervisor_cleanup", stage=stage, returncode=rep.get("returncode"), signals_sent=rep.get("signals_sent"),
+                signals_refused=rep.get("signals_refused"), child_exit_seen_before_cleanup=exit_marked)
     summary = None
     for line in reversed(p.tail("stdout", 5)):
         try:
@@ -186,5 +250,6 @@ def run_stage(stage: str, *, api_url: str = "", token_getter: Callable[[], str] 
                 echo(f"  --- {which} tail ---")
                 for line in t:
                     echo("   ", line[:240])
+    mk.mark("before_stage_return", stage=stage, passed=passed)
     return {"stage": stage, "passed": passed, "checks": checks, "exit": rep, "summary": summary, "timeline": timeline, "dir": str(out_dir), "pid": pid,
             "events": len(ev), "oom_kill_delta": oom_delta}

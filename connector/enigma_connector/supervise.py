@@ -34,6 +34,8 @@ class ConnectorProcess:
         self.stdout_path, self.stderr_path = self.dir / "connector.stdout.log", self.dir / "connector.stderr.log"
         self.diag_path, self.fault_path = self.dir / "connector.diag.jsonl", self.dir / "connector.faulthandler.log"
         self._fhs: list[Any] = []
+        self.sent_signals: list[str] = []                       # evidence: every signal this supervisor actually delivered
+        self.refused_signals: list[dict[str, Any]] = []         # evidence: every signal it refused to deliver, and why
 
     def __repr__(self) -> str:                                  # no env, no args: nothing secret can leak through a print()
         return f"<ConnectorProcess pid={getattr(self.proc, 'pid', None)} running={self.running}>"
@@ -46,10 +48,15 @@ class ConnectorProcess:
         out, err = open(self.stdout_path, "ab"), open(self.stderr_path, "ab")           # noqa: SIM115 - closed in _close_files()
         self._fhs += [out, err]
         extra = ["--diag-log", str(self.diag_path), "--faulthandler-log", str(self.fault_path)] if self._command[-1] == "enigma_connector" else []
-        self.proc = self._popen([*self._command, *extra, *self._args], env=self._env, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
-                                start_new_session=True, close_fds=True, cwd=str(self.dir))
+        try:
+            self.proc = self._popen([*self._command, *extra, *self._args], env=self._env, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
+                                    start_new_session=True, close_fds=True, cwd=str(self.dir))
+        except BaseException:
+            self._close_files()                                 # a failed spawn must not leak the two log handles
+            raise
+        finally:
+            self._env = {}                                      # the key is not kept in this (notebook) process any longer than needed, even on failure
         self._t0 = self._clock()
-        self._env = {}                                          # the key is not kept in this (notebook) process any longer than needed to spawn the child
         return self.proc.pid
 
     @property
@@ -76,18 +83,33 @@ class ConnectorProcess:
                 self.wait(kill_after_s)
         rep = self.status()
         rep["escalated_to_sigkill"] = escalated
+        rep["signals_sent"] = list(self.sent_signals)
+        rep["signals_refused"] = list(self.refused_signals)
         self._close_files()
         return rep
 
-    def _signal(self, sig: int) -> None:
+    def _signal(self, sig: int) -> bool:
+        """Signal the child's own process group, or nothing. Returns True only if a signal was actually sent.
+
+        Identity rules (each is required):
+        * ``poll()`` must still report the child as not reaped. Until WE reap it, the kernel keeps its PID (and therefore its group id) reserved,
+          even as a zombie, so the PID cannot have been reused by an unrelated process.
+        * the PID must still lead its own process group AND its own session (``start_new_session=True``). A session leader cannot leave its group,
+          so if this is false the PID is no longer our child: nothing is signalled. (Earlier revisions fell back to ``os.kill(pid)`` here, which
+          could only ever reach a DIFFERENT process.)
+        * the group must never be the notebook's own group or session."""
         pid = self.proc.pid
+        if self.proc.poll() is not None:                         # already exited and reaped: there is nothing of ours left to signal
+            return False
         try:
-            if os.getpgid(pid) == pid:                           # it leads its own group (start_new_session): signal exactly that group
-                os.killpg(pid, sig)
-            else:                                                # never signal a group we do not own
-                os.kill(pid, sig)
+            if os.getpgid(pid) != pid or os.getsid(pid) != pid or pid in (os.getpgid(0), os.getsid(0)):
+                self.refused_signals.append({"signal": signal.Signals(sig).name, "pid": pid, "reason": "pid_is_not_our_session_leader"})
+                return False
+            os.killpg(pid, sig)
         except ProcessLookupError:
-            pass
+            return False
+        self.sent_signals.append(signal.Signals(sig).name)
+        return True
 
     def _close_files(self) -> None:
         for fh in self._fhs:

@@ -61,13 +61,16 @@ class Connector:
                 "max_model_len": self.cfg.max_model_len,
                 "gpus": [{k: g.get(k) for k in ("index", "uuid", "name", "memory_total_mib")} for g in inv],
                 "sdk": {k: v for k, v in {**self.sdk_identity, "driver_version": (inv[0].get("driver") if inv else None)}.items() if v}, "capabilities": caps}
-        for delay in backoff_delays(1.0, 30.0):
+        self.diag.emit("register_inventory", gpus=len(inv), nvml=self.gpu is not None)
+        for attempt, delay in enumerate(backoff_delays(1.0, 30.0), 1):
             try:
+                self.diag.emit("register_request_begin", attempt=attempt)        # the LAST line before the external call, flushed + fsynced
                 r = self.api.post("/api/v1/runtimes/register", body)
                 self.run_id, self.runtime_id = r["run_id"], r["runtime_id"]
                 self.diag.emit("register_ok", runtime_id=self.runtime_id, run_id=self.run_id, is_mock=self.is_mock, features=sorted(self.features))
                 return r
-            except Transient:
+            except Transient as e:
+                self.diag.emit("register_transient_failure", attempt=attempt, error=str(e))
                 log.warning("register: API unreachable, retrying")
                 if self._wait(delay):
                     raise RuntimeError("stopped before registration") from None
