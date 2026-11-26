@@ -14,18 +14,18 @@ spec.loader.exec_module(sync)
 
 def test_creates_then_reports_unchanged(tmp_path):
     rows = sync.sync(tmp_path)
-    assert [r["action"] for r in rows] == ["created"] * 6
+    assert [r["action"] for r in rows] == ["created"] * 3
     assert all(Path(r["path"]).is_file() and sync.sha256(Path(r["path"])) == r["sha256"] for r in rows)
-    assert [r["action"] for r in sync.sync(tmp_path)] == ["unchanged"] * 6
+    assert [r["action"] for r in sync.sync(tmp_path)] == ["unchanged"] * 3
 
 
 def test_a_differing_destination_file_is_backed_up_before_it_is_replaced(tmp_path):
     sync.sync(tmp_path)
-    target = tmp_path / "enigma_kaggle_cpu_platform_baseline.ipynb"
+    target = tmp_path / "01_enigma_kaggle_platform_aws_diagnostics.ipynb"
     target.write_text('{"my": "edited copy"}')
     rows = {Path(r["path"]).name: r["action"] for r in sync.sync(tmp_path)}
-    assert rows["enigma_kaggle_cpu_platform_baseline.ipynb"] == "updated"
-    backups = list(tmp_path.glob("enigma_kaggle_cpu_platform_baseline.ipynb.*.bak"))
+    assert rows["01_enigma_kaggle_platform_aws_diagnostics.ipynb"] == "updated"
+    backups = list(tmp_path.glob("01_enigma_kaggle_platform_aws_diagnostics.ipynb.*.bak"))
     assert len(backups) == 1 and backups[0].read_text() == '{"my": "edited copy"}'
 
 
