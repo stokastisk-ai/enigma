@@ -147,7 +147,9 @@ def export_evidence():
     return path
 
 
-mark("prelude", python=platform.python_version(), expect=EXPECT, gpu_device=HAS_GPU_DEVICE)
+_os = dict(l.split("=", 1) for l in (_read("/etc/os-release") or "").splitlines() if "=" in l)
+_kaggle = {k: os.environ[k] for k in ("KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_DOCKER_IMAGE") if k in os.environ}   # allow-list only; never the raw environment
+mark("prelude", python=platform.python_version(), expect=EXPECT, gpu_device=HAS_GPU_DEVICE, os=_os.get("PRETTY_NAME", "").strip('"'), kaggle=_kaggle)
 print("ATTEMPT", ATTEMPT, "| markers:", ATTEMPT_DIR + "/markers.jsonl", flush=True)
 '''
 

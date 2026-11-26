@@ -40,6 +40,7 @@ def test_each_notebook_starts_with_its_own_guarded_prelude(name):
     assert f'NOTEBOOK = "{name}"' in first and f'EXPECT = "{gen.NOTEBOOKS[name]}"' in first
     assert 'os.makedirs(ATTEMPT_DIR, exist_ok=False)' in first and "class DiagnosticStop" in first
     assert 'assert os.path.isdir("/kaggle/working")' in first
+    assert "os.environ[k] for k in (\"KAGGLE_KERNEL_RUN_TYPE\", \"KAGGLE_DOCKER_IMAGE\")" in first and "dict(os.environ)" not in first
 
 
 @pytest.mark.parametrize("name", [n for n, e in gen.NOTEBOOKS.items() if e == "cpu"])
