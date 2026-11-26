@@ -14,13 +14,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "kaggle" / "diagnostics"
 
-ENIGMA_REV = "c5e5e8dedcaa2582f2a55a5918ab3ad6f03b3a49"           # reviewed connector revision (branch diag/kaggle-isolation-2026-11-26)
+ENIGMA_REV = "6e85beb8850d1a69ef5bbea1af27933e28f8ba7b"           # reviewed CONNECTOR-SOURCE commit (pinned separately from the documentation commit that carries these notebooks)
 API_URL = "https://enigma-api-production-c8cffe9d.up.railway.app"
 WHEEL = "https://huggingface.co/waqasm86/stokastisk/resolve/main/wheels/stokastisk-0.1.0-5-cp313-cp313-linux_x86_64.whl"
 WHEEL_SHA256 = "fe80d7c36fa78cf8a26feb1e00bb5f1f006ca45a027450353603976320ae0b3e"
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 # The only replacement the build-5 install made on Kaggle (2026-11-25 and 2026-11-26): the wheel pins pydantic-settings==2.16.2 exactly.
 KNOWN_REPLACEMENTS = {"pydantic-settings": ["2.16.3", "2.16.2"]}
+# Unpublished build-6 candidate (stokastisk-ai/stokastisk 81d6c33, PR #9): installed only from a PRIVATE Kaggle dataset, hash-checked; expected to replace nothing.
+CANDIDATE6_SHA256 = "1b3b257265991bedf2cd591e22bb601ed2d551788e5187f875462b548b7d5100"
+NO_INPUTS_NOTEBOOKS = ("enigma_kaggle_cpu_platform_baseline", "enigma_kaggle_cpu_connector_isolation")
 
 NOTEBOOKS = {
     "enigma_kaggle_cpu_platform_baseline": "cpu",
@@ -37,7 +40,7 @@ DURABILITY = ("**Evidence durability.** Every step prints flushed `MARK` and `VE
               "occurred.** After a fatal session, copy the last `MARK` lines (UTC time, `t` = seconds since the prelude) into the incident report.")
 
 PRELUDE = r'''# P0. Prelude: environment guard, attempt id, markers and verdicts. Standard library only: no network, no GPU library is imported.
-import os, sys, json, time, uuid, platform, shutil, subprocess, re
+import os, sys, json, time, uuid, platform, shutil, subprocess, re, pathlib
 NOTEBOOK = "__NOTEBOOK__"
 EXPECT = "__EXPECT__"                                   # "cpu" = Accelerator None; "gpu" = GPU T4 x2
 assert os.path.isdir("/kaggle/working"), "Kaggle only: refusing to run anywhere else (never on a developer laptop)"
@@ -53,6 +56,11 @@ if EXPECT == "cpu" and HAS_GPU_DEVICE:
 if EXPECT == "gpu" and not HAS_GPU_DEVICE:
     raise DiagnosticStop("INCONCLUSIVE: wrong environment. No GPU; set Accelerator = GPU T4 x2 and start a NEW session")
 assert sys.version_info[:2] == (3, 13), f"expected Python 3.13 (build-5 wheel is cp313), got {platform.python_version()}"
+REQUIRE_NO_INPUTS = __NO_INPUTS__                       # A and B must run with NO attached dataset, competition or utility script
+_inputs = sorted(os.listdir("/kaggle/input")) if os.path.isdir("/kaggle/input") else []
+if REQUIRE_NO_INPUTS and _inputs:
+    raise DiagnosticStop(f"INCONCLUSIVE: wrong environment. Inputs are attached {_inputs}; remove every input and start a NEW session")
+EXPERIMENT = "n/a"                                     # set by the 'wheel under test' cell in C, D and F; recorded in every MARK
 
 ATTEMPT = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
 ATTEMPT_DIR = f"/kaggle/working/enigma-diag-attempts/{NOTEBOOK}/{ATTEMPT}"
@@ -96,7 +104,7 @@ def ident():
 
 
 def mark(name, **fields):
-    rec = {"attempt": ATTEMPT, "nb": NOTEBOOK, "marker": name, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    rec = {"attempt": ATTEMPT, "nb": NOTEBOOK, "experiment": EXPERIMENT, "marker": name, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "t": round(time.monotonic() - T0, 2), **ident(), **host(), **fields}
     line = json.dumps(rec, default=str)
     with open(f"{ATTEMPT_DIR}/markers.jsonl", "a") as fh:
@@ -149,7 +157,7 @@ def export_evidence():
 
 _os = dict(l.split("=", 1) for l in (_read("/etc/os-release") or "").splitlines() if "=" in l)
 _kaggle = {k: os.environ[k] for k in ("KAGGLE_KERNEL_RUN_TYPE", "KAGGLE_DOCKER_IMAGE") if k in os.environ}   # allow-list only; never the raw environment
-mark("prelude", python=platform.python_version(), expect=EXPECT, gpu_device=HAS_GPU_DEVICE, os=_os.get("PRETTY_NAME", "").strip('"'), kaggle=_kaggle)
+mark("prelude", python=platform.python_version(), expect=EXPECT, gpu_device=HAS_GPU_DEVICE, os=_os.get("PRETTY_NAME", "").strip('"'), kaggle=_kaggle, inputs=_inputs)
 print("ATTEMPT", ATTEMPT, "| markers:", ATTEMPT_DIR + "/markers.jsonl", flush=True)
 '''
 
@@ -184,11 +192,28 @@ def inventory():
     return {norm(d.metadata["Name"]): d.version for d in md.distributions() if d.metadata["Name"]}
 '''
 
-INSTALL = r'''# Controlled build-5 installation. First a dry-run plan; only the known, reported replacement is accepted; then the real install; then a diff and pip check.
-WHEEL = "__WHEEL__"
-SHA256 = "__SHA__"
-KNOWN_REPLACEMENTS = __KNOWN__          # the wheel pins pydantic-settings==2.16.2; Kaggle's image ships 2.16.3 (CONFLICT with "preserve every version")
-SPEC = f"stokastisk @ {WHEEL}#sha256={SHA256}"
+INSTALL = r'''# Wheel under test, then a controlled installation: dry-run plan first, only the declared replacements are accepted, then the real install,
+# a before/after inventory diff, pip check, and the INSTALLED package identity (WHEEL build tag), read without importing anything.
+EXPERIMENT = "published-build5"          # or "candidate-build6" (a separate session; never mix the two experiments' evidence)
+CANDIDATE_WHEEL_PATH = ""                # candidate only: /kaggle/input/<private-dataset>/stokastisk-0.1.0-6-cp313-cp313-linux_x86_64.whl
+WHEELS = {
+    "published-build5": {"build": "5", "url": "__WHEEL__", "sha256": "__SHA__", "known_replacements": __KNOWN__},
+    "candidate-build6": {"build": "6", "sha256": "__SHA6__", "known_replacements": {}},     # expected to replace NOTHING
+}
+assert EXPERIMENT in WHEELS, EXPERIMENT
+W = WHEELS[EXPERIMENT]
+KNOWN_REPLACEMENTS = W["known_replacements"]
+if EXPERIMENT == "published-build5":
+    SPEC = f"stokastisk @ {W['url']}#sha256={W['sha256']}"
+else:
+    import hashlib
+    if not CANDIDATE_WHEEL_PATH or not os.path.isfile(CANDIDATE_WHEEL_PATH):
+        verdict("wheel_selected", "INCONCLUSIVE", "candidate wheel not attached: set CANDIDATE_WHEEL_PATH to the file in your private Kaggle dataset")
+    got = hashlib.sha256(open(CANDIDATE_WHEEL_PATH, "rb").read()).hexdigest()
+    if got != W["sha256"]:
+        verdict("wheel_selected", "FAIL", f"candidate sha256 {got} != expected {W['sha256']}")
+    SPEC = CANDIDATE_WHEEL_PATH
+verdict("wheel_selected", "PASS", f"{EXPERIMENT} (build {W['build']}, sha256 {W['sha256'][:16]}...)", experiment=EXPERIMENT)
 BASE = ("torch", "triton", "transformers", "pydantic", "pydantic-core", "fastapi", "starlette", "numpy")
 norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()                                     # noqa: E731
 
@@ -219,7 +244,7 @@ print("DEPENDENCY_VERSION_PRESERVATION:", "VERIFIED" if not replaced else f"CONF
 unexpected = {k: v for k, v in replaced.items() if KNOWN_REPLACEMENTS.get(k) != v}
 if unexpected:
     verdict("install_plan", "INCONCLUSIVE", f"pip would replace unexpected preinstalled packages {unexpected}: not installing", replaced=replaced)
-verdict("install_plan", "PASS", f"{len(plan)} to install, replacements limited to the known set {replaced}", replaced=replaced, added=added)
+verdict("install_plan", "PASS", f"{len(plan)} to install, replacements limited to the declared set {replaced}", replaced=replaced, added=added)
 
 mark("install_begin")
 r = subprocess.run([sys.executable, "-m", "pip", "install", "--index-url", "https://pypi.org/simple", SPEC], capture_output=True, text=True)
@@ -232,9 +257,15 @@ new = sorted(k for k in after if k not in before)
 chk = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True, text=True)
 mark("install_end", rc=r.returncode, changed=changed, removed=removed, new=new, pip_check_rc=chk.returncode, pip_check=chk.stdout.strip().splitlines()[:40])
 base_same = all(before.get(b) == after.get(b) for b in BASE)
-ok = r.returncode == 0 and base_same and changed == replaced and not removed and "stokastisk" in after
-verdict("install", "PASS" if ok else "FAIL", f"rc={r.returncode}, base unchanged={base_same}, changed={changed}, removed={removed}",
-        changed=changed, new_count=len(new), pip_check_rc=chk.returncode)
+import importlib.metadata as md
+_dist = md.distribution("stokastisk")
+_build = next((l.split(":", 1)[1].strip() for l in (_dist.read_text("WHEEL") or "").splitlines() if l.startswith("Build:")), None)
+_serving = pathlib.Path(_dist.locate_file("stokastisk/serving.py")).read_text()
+identity_ok = _build == W["build"] and (("_kill_orphans" in _serving) == (W["build"] == "6"))
+mark("installed_identity", experiment=EXPERIMENT, wheel_build=_build, build6_code=("_kill_orphans" in _serving), version=_dist.version)
+ok = r.returncode == 0 and base_same and changed == replaced and not removed and "stokastisk" in after and identity_ok
+verdict("install", "PASS" if ok else "FAIL", f"rc={r.returncode}, base unchanged={base_same}, changed={changed}, removed={removed}, installed build={_build}",
+        changed=changed, new_count=len(new), pip_check_rc=chk.returncode, installed_build=_build)
 '''
 
 SERVER = r'''# Start the Stokastisk server with the previously successful settings (TP=1, PP=1, 2048 tokens, gpu_memory_utilization 0.60, Triton attention, fp16, eager).
@@ -322,7 +353,7 @@ def sub(text: str, **kw: str) -> str:
 
 
 def prelude(name: str) -> dict:
-    return code(sub(PRELUDE, NOTEBOOK=name, EXPECT=NOTEBOOKS[name]))
+    return code(sub(PRELUDE, NOTEBOOK=name, EXPECT=NOTEBOOKS[name], NO_INPUTS=str(name in NO_INPUTS_NOTEBOOKS)))
 
 
 def header(title: str, body: str, name: str) -> dict:
@@ -483,8 +514,10 @@ names = [x.get("name") for x in g.get("gpus", [])]
 verdict("C1_inventory", "PASS" if names == ["Tesla T4", "Tesla T4"] else "INCONCLUSIVE", f"GPUs {names}")'''),
         md("## C2. Idle survival before installing anything: 10 minutes"),
         code('require("C1_inventory")\nobserve("C2_gpu_idle_10min", 600, every=15, sample=lambda: gpu_query() if int(time.monotonic()) % 60 < 15 else {})'),
-        md("## C3. Controlled build-5 installation\nDry-run plan first; only the reported `pydantic-settings` 2.16.3 → 2.16.2 replacement is accepted. Any other change stops before installing."),
-        code('require("C2_gpu_idle_10min")\n' + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
+        md("## C3. Controlled installation of the wheel under test\nChoose `EXPERIMENT` in the cell: `published-build5` (accepts only its known `pydantic-settings` "
+           "2.16.3 → 2.16.2 replacement) or `candidate-build6` (private dataset, SHA-256-checked, must replace **nothing**). Dry-run plan first; any undeclared "
+           "change stops before installing. Run the two experiments in separate sessions."),
+        code('require("C2_gpu_idle_10min")\n' + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SHA6=CANDIDATE6_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
         md("## C4. Post-install survival: 10 minutes, no model, no server"),
         code('require("install")\nobserve("C4_post_install_idle_10min", 600, every=15, sample=lambda: gpu_query() if int(time.monotonic()) % 60 < 15 else {})'),
         md("## Evidence export"),
@@ -521,7 +554,7 @@ verdict("D5_stop", "PASS" if server.shutdown_report.get("group_gone") else "FAIL
         prelude(n),
         code(GPU_HELPERS),
         md("## D0. Install build 5 (same controlled procedure as notebook C)"),
-        code(sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
+        code(sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SHA6=CANDIDATE6_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
         md("## D1. Start the server"),
         code(sub(SERVER, MODEL=MODEL)),
         md("## D2. Verified local inference"),
@@ -621,7 +654,7 @@ verdict("cloud_gate", "PASS", "operator opened the cloud gate")'''
         code(GPU_HELPERS),
         code(gate),
         md("## F0. Install build 5, start the server, verify local inference"),
-        code('require("baselines_confirmed")\n' + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
+        code('require("baselines_confirmed")\n' + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SHA6=CANDIDATE6_SHA256, KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
         code(sub(SERVER, MODEL=MODEL)),
         code(LOCAL_INFERENCE),
         md("## F1. Reviewed connector and stage helper"),

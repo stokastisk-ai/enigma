@@ -138,3 +138,23 @@ def test_the_pinned_connector_revision_contains_the_reviewed_fixes():
     assert "def finite_number" in show("connector/enigma_connector/config.py")
     assert "class ProbeWorkerError" in show("connector/enigma_connector/probe.py")
     assert "_stop_lock" in show("connector/enigma_connector/supervise.py") and "pid_is_not_our_session_leader" in show("connector/enigma_connector/supervise.py")
+    assert "def open_loopback" in show("connector/enigma_connector/localnet.py")
+    tree = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "-r", "--name-only", rev], capture_output=True, text=True).stdout.split()
+    assert not any(p.startswith("docs/kaggle/diagnostics/") and p.endswith(".ipynb") and "final_integration" in p and rev in show(p) for p in tree), \
+        "circular pin: the connector revision must not contain notebooks that pin itself"
+
+
+def test_a_and_b_refuse_attached_inputs_and_c_d_f_select_one_experiment():
+    for name in ("enigma_kaggle_cpu_platform_baseline", "enigma_kaggle_cpu_connector_isolation"):
+        assert "REQUIRE_NO_INPUTS = True" in code(name)[0]
+    for name in ("stokastisk_kaggle_gpu_platform_baseline", "stokastisk_kaggle_vllm_stability", "enigma_stokastisk_qwen25_05b_final_integration"):
+        text = "\n".join(code(name))
+        assert "REQUIRE_NO_INPUTS = False" in code(name)[0]
+        assert 'EXPERIMENT = "published-build5"' in text and f'"sha256": "{gen.CANDIDATE6_SHA256}"' in text and '"known_replacements": {}' in text
+        assert 'read_text("WHEEL")' in text and "identity_ok" in text
+
+
+def test_every_marker_records_the_experiment(tmp_path):
+    g = _prelude_namespace(tmp_path)
+    g["EXPERIMENT"] = "candidate-build6"
+    assert g["mark"]("x")["experiment"] == "candidate-build6"
