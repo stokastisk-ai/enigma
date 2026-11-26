@@ -240,7 +240,7 @@ def test_nvml_probe_records_a_failing_sample_and_keeps_going(tmp_path):
 
 
 def test_vllm_probe_reports_an_unreachable_server_without_raising(tmp_path):
-    res = run_local_vllm(VllmSampler("http://127.0.0.1:9"), DiagLog(tmp_path / "v.jsonl"), threading.Event(), interval_s=0.01, duration_s=0.1)
+    res = run_local_vllm(VllmSampler("http://127.0.0.1:9"), DiagLog(tmp_path / "v.jsonl"), threading.Event(), interval_s=0.01, duration_s=0.5)   # 0.1 s flaked on a slow CI runner (1 scrape)
     assert res["scrapes"] >= 2 and res["empty"] == res["scrapes"]
 
 
