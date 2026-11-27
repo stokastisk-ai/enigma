@@ -15,26 +15,24 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "kaggle" / "diagnostics"
 
 ENIGMA_REV = "8648d91632b5bbf5ae174403a01578c04a5eff20"           # reviewed CONNECTOR-SOURCE commit (has serverctl); pinned separately from the notebook commit
-API_URL = "https://enigma-api-production-c8cffe9d.up.railway.app"
-DIAG_URL = "https://ygjtcfhrgkhyybl4gotvzmfa440zzlkh.lambda-url.us-east-1.on.aws/"     # independent AWS diagnostic ingestion (Lambda Function URL)
-AWS_RUNTIME_URL = "https://ifmsy4cngt3kd474oqayy6b5py0ufiht.lambda-url.us-east-1.on.aws"   # optional AWS runtime API (same FastAPI app on Lambda); ISOLATED staging data until the cutover
-AWS_RUNTIME_PROD_URL = ""           # the AWS PRODUCTION runtime endpoint: not deployed until the DynamoDB + Cognito cutover (empty = aws-production is BLOCKED)
-# Public, non-secret data-plane fingerprints (enigma_api.settings.Settings.data_plane) of each deployment's configured store, fixed here at generation time:
-DATA_PLANES = {"aws-staging": "9a507821bc94305b",          # dynamodb:enigma-rt-staging (isolated staging table)
-               "aws-production": "5bdb3004af425d7c",       # dynamodb:enigma-prod (the future authoritative production table)
-               "railway-comparison": "432c8dfc55388292"}   # postgres: the Neon production database Railway uses today (derived without exposing the DSN)
+# OCI Always Free deployment (one A1 VM; Caddy + Let's Encrypt). Fill in the verified public origin once the VM is deployed and its certificate is
+# publicly trusted, then regenerate. EMPTY = every cloud step reports BLOCKED (no request is sent); notebook 02 standalone is unaffected.
+OCI_BASE_URL = ""
+DIAG_URL = (OCI_BASE_URL.rstrip("/") + "/api/v1/diag/events") if OCI_BASE_URL else ""   # diagnostic markers: same contract the retired AWS Lambda had
+# Public, non-secret data-plane fingerprint (enigma_api.settings.Settings.data_plane) of the OCI deployment: postgres:<compose host db>/<database enigma>.
+DATA_PLANES = {"oci-production": "1a21069207c5c12c"}
 WHEEL = "https://huggingface.co/waqasm86/stokastisk/resolve/main/wheels/stokastisk-0.1.0-5-cp313-cp313-linux_x86_64.whl"
 WHEEL_SHA256 = "fe80d7c36fa78cf8a26feb1e00bb5f1f006ca45a027450353603976320ae0b3e"
 WHEEL_SIZE = 38057515
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 # The ONLY replacement installing the immutable build-5 wheel makes on Kaggle (2026-11-25/26 logs): its METADATA pins pydantic-settings==2.16.2 exactly.
 KNOWN_REPLACEMENTS = {"pydantic-settings": ["2.16.3", "2.16.2"]}
-NO_INPUTS_NOTEBOOKS = ("01_enigma_kaggle_platform_aws_diagnostics",)
+NO_INPUTS_NOTEBOOKS = ("01_enigma_kaggle_platform_oci_diagnostics",)
 
 NOTEBOOKS = {
-    "01_enigma_kaggle_platform_aws_diagnostics": "cpu",
+    "01_enigma_kaggle_platform_oci_diagnostics": "cpu",
     "02_stokastisk_build5_kaggle_t4_validation": "gpu",
-    "03_enigma_stokastisk_build5_aws_integration": "gpu",
+    "03_enigma_stokastisk_build5_oci_integration": "gpu",
 }
 
 DURABILITY = ("**Evidence durability.** Every step prints flushed `MARK` and `VERDICT` lines and appends them to an fsynced `markers.jsonl` in a new, "
@@ -66,11 +64,10 @@ if REQUIRE_NO_INPUTS and _inputs:
 # ---- configuration: edit ONLY these lines, before running anything; they are fixed for the whole attempt ----
 __MODE_LINE__
 # ------------------------------------------------------------------------------------------------------------
-assert VALIDATION_MODE in ("standalone", "aws-assisted", "aws-required"), VALIDATION_MODE
-assert EXPERIMENT_ID in ("A", "B", "C", "D", "-"), EXPERIMENT_ID
-assert RUNTIME_TRANSPORT in ("none", "railway", "aws"), RUNTIME_TRANSPORT
-EXPERIMENT = ("build5" if EXPECT == "gpu" else "no-sdk") + ("" if VALIDATION_MODE == "aws-required" else "-" + VALIDATION_MODE) \
-    + ("" if EXPERIMENT_ID == "-" else "-exp" + EXPERIMENT_ID) + ("" if RUNTIME_TRANSPORT == "none" else "-via-" + RUNTIME_TRANSPORT)   # in every MARK
+assert VALIDATION_MODE in ("standalone", "oci-assisted", "oci-required"), VALIDATION_MODE
+assert RUNTIME_TRANSPORT in ("none", "oci"), RUNTIME_TRANSPORT
+EXPERIMENT = ("build5" if EXPECT == "gpu" else "no-sdk") + ("" if VALIDATION_MODE == "oci-required" else "-" + VALIDATION_MODE) \
+    + ("" if RUNTIME_TRANSPORT == "none" else "-via-" + RUNTIME_TRANSPORT)   # in every MARK
 
 ATTEMPT = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
 ATTEMPT_DIR = f"/kaggle/working/enigma-diag-attempts/{NOTEBOOK}/{ATTEMPT}"
@@ -381,22 +378,15 @@ def sub(text: str, **kw: str) -> str:
 
 
 MODE_LINES = {
-    "01_enigma_kaggle_platform_aws_diagnostics": (
-        'VALIDATION_MODE = "aws-required"\n'
-        'EXPERIMENT_ID = "A"            # ONE per fresh session: "A" AWS-only (default; never contacts Railway) | "B" Railway direct | '
-        '"C" AWS runtime endpoint | "D" Railway via a short-lived subprocess\n'
-        'RUNTIME_TRANSPORT = "none"'),
+    "01_enigma_kaggle_platform_oci_diagnostics": (
+        'VALIDATION_MODE = "oci-required"\nRUNTIME_TRANSPORT = "none"'),
     "02_stokastisk_build5_kaggle_t4_validation": (
-        'VALIDATION_MODE = "standalone"   # "standalone" = Mode A (no AWS traffic, no secret needed) | "aws-assisted" = Mode B (ENIGMA_DIAG_KEY required)\n'
-        'EXPERIMENT_ID = "-"\nRUNTIME_TRANSPORT = "none"'),
-    "03_enigma_stokastisk_build5_aws_integration": (
-        'VALIDATION_MODE = "aws-required"\nEXPERIMENT_ID = "-"\n'
-        'INTEGRATION_MODE = "aws-staging"     # "aws-staging" = AWS runtime endpoint on its ISOLATED staging table (default; staging acceptance only) | '
-        '"aws-production" = AWS runtime endpoint on production data (BLOCKED until the DynamoDB + Cognito cutover) | "railway-comparison" = Railway direct\n'
-        'ALLOW_RAILWAY_COMPARISON = False     # railway-comparison contacts Railway from Kaggle (associated with every fatal Kaggle session so far): '
-        'set True only deliberately\n'
-        'RUNTIME_TRANSPORT = {"aws-staging": "aws", "aws-production": "aws", "railway-comparison": "railway"}[INTEGRATION_MODE]   # derived; fixed for '
-        'the attempt, never switched, no fallback'),
+        'VALIDATION_MODE = "standalone"   # "standalone" = Mode A (no network to Enigma, no secret needed) | "oci-assisted" = Mode B (ENIGMA_DIAG_KEY required)\n'
+        'RUNTIME_TRANSPORT = "none"'),
+    "03_enigma_stokastisk_build5_oci_integration": (
+        'VALIDATION_MODE = "oci-required"\n'
+        'INTEGRATION_MODE = "oci-production"   # the OCI Always Free deployment (the only cloud endpoint); BLOCKED while OCI_BASE_URL is empty\n'
+        'RUNTIME_TRANSPORT = "oci"            # fixed for the attempt, never switched, no fallback'),
 }
 
 
@@ -414,26 +404,28 @@ def header(title: str, body: str, name: str) -> dict:
 
 # ------------------------------------------------------------------------------------------------------------------------------------- the three notebooks
 SECRETS_MD = ("**Kaggle Secrets (Add-ons → Secrets; tick each one for this notebook).** `ENIGMA_DIAG_KEY` = the 56-character diagnostic key "
-              "(`edx_…`, from the private local file `.enigma-local/ENIGMA_DIAG_KEY.txt`); it authenticates only the independent AWS diagnostic "
-              "Lambda. `ENIGMA_RUNTIME_TOKEN` = the 60-character Enigma runtime key (`enig_rt_…`); it authenticates only Enigma runtime "
-              "traffic. They are never interchangeable and neither is an AWS credential (no AWS access key is ever needed in Kaggle). If a "
-              "credential preflight cell reports a problem, fix the secret in the sidebar and **re-run only that cell** (and the cell after "
-              "it): the attempt id, event sequence and earlier verdicts are kept. A new Kaggle session always starts from the top.")
+              "(`edx_…`, issued once by `scripts/diag_keys.py create` on the OCI host); it authenticates only `POST /api/v1/diag/events`. "
+              "`ENIGMA_RUNTIME_TOKEN` = the 60-character Enigma runtime key (`enig_rt_…`, issued in the Enigma web app); it authenticates only runtime "
+              "traffic. They are never interchangeable; no cloud-provider credential (OCI, AWS) is ever needed in Kaggle. If a credential preflight "
+              "cell reports a problem, fix the secret in the sidebar and **re-run only that cell** (and the cell after it): the attempt id, event "
+              "sequence and earlier verdicts are kept. A new Kaggle session always starts from the top.")
 DIAG_PROBE = r'''require("diag_key_preflight")
-first = rmark("aws_first_event", stage="aws", phase="probe", note="first independent AWS event")
+if not DIAG_URL:
+    verdict("diag_endpoint", "INCONCLUSIVE", "BLOCKED: the OCI endpoint is not deployed yet (OCI_BASE_URL is empty in the generator); nothing was sent",
+            blocked=True)
+first = rmark("diag_first_event", stage="diag", phase="probe", note="first diagnostic event")
 if not first:
-    verdict("aws_endpoint", "INCONCLUSIVE", f"{first['code']}: {DIAG_GUIDANCE.get(first['code'], '')}", remote=dict(first))
+    verdict("diag_endpoint", "INCONCLUSIVE", f"{first['code']}: {DIAG_GUIDANCE.get(first['code'], '')}", remote=dict(first))
 dup = resubmit_last()                   # the SAME event (same attempt id and seq) again: a durable record must answer as an already-stored duplicate
 durable = bool(dup) and dup.get("duplicates") == 1 and dup.get("stored") == 0
-verdict("aws_endpoint", "PASS" if durable else "INCONCLUSIVE",
+verdict("diag_endpoint", "PASS" if durable else "INCONCLUSIVE",
         f"first {first['code']} (stored={first.get('stored')}, duplicates={first.get('duplicates')}); identical resubmission {dup.get('code')} "
         f"(duplicates={dup.get('duplicates')})", first=dict(first), resubmit=dict(dup))'''
 
 
 def nb_01() -> list[dict]:
-    n = "01_enigma_kaggle_platform_aws_diagnostics"
-    controls = r"""require("idle_10min")
-import urllib.request, urllib.error
+    n = "01_enigma_kaggle_platform_oci_diagnostics"
+    controls = r"""import urllib.request, urllib.error
 def get(name, url):
     mark("request_begin", target=name)
     t = time.monotonic(); row = {"target": name}
@@ -451,123 +443,69 @@ def get(name, url):
 rows = [get("pypi", "https://pypi.org/simple/pip/"), get("gstatic", "https://www.gstatic.com/generate_204"), get("huggingface", "https://huggingface.co/api/models/Qwen/Qwen2.5-0.5B-Instruct")]
 ok = all(r.get("http") in (200, 204) for r in rows)
 verdict("controls_https", "PASS" if ok else "INCONCLUSIVE", f"{[(r['target'], r.get('http'), r.get('latency_s')) for r in rows]}")"""
-    aws_window = r"""require("aws_endpoint")
-# Experiment A: 10 minutes of AWS-only survival, one durable marker per minute (10 requests): it runs well past the VM uptime (~1390 s) at which
-# the 2026-11-26 23:31 session ended, so a lifetime-only explanation is tested without Railway. Other experiments: 2 minutes, 4 markers.
-if EXPERIMENT_ID == "A":
-    observe("aws_survival", 600, every=15, remote_at=tuple(range(60, 601, 60)), durable_begin=True)
-else:
-    observe("aws_survival", 120, every=15, remote_at=(30, 60, 90, 120), durable_begin=True)"""
-    target = sub(r"""# The ONE target request of this experiment (A: none). Exactly one bounded request; never repeated automatically after an unexplained fatal session.
-require("aws_survival")
-TARGETS = {"B": ("railway_health", "__API__/api/v1/health"), "C": ("aws_runtime_health", "__AWSRT__/api/v1/health"),
-           "D": ("railway_health_subprocess", "__API__/api/v1/health")}
-CHILD = r'''
-import json, sys, time, urllib.request, urllib.error
-t = time.monotonic(); row = {}
+    target = r"""# The ONE bounded, unauthenticated request to the OCI deployment: its public /api/v1/health, bracketed by durable markers. HTTP 200 alone
+# is not readiness; notebook 03 checks the schema, deployment label, store, auth provider and data-plane fingerprint before any GPU work.
+require("diag_endpoint", "diag_survival_120s")
+url = DIAG_URL.rsplit("/api/v1/", 1)[0] + "/api/v1/health"
+rcheck("target_marker", "before_target", stage="oci_health", phase="before", target="oci_health")
+t = time.monotonic(); row = {"target": "oci_health"}
 try:
-    req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json", "Connection": "close"})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    req = urllib.request.Request(url, headers={"User-Agent": "Enigma-Kaggle-Diagnostic/7.0", "Accept": "application/json", "Connection": "close"})
+    with urllib.request.urlopen(req, timeout=20) as r:
         row["http"] = r.status; r.read(4096)
 except urllib.error.HTTPError as e:
     row["http"] = e.code
 except Exception as e:
     row["exc"] = type(e).__name__
 row["latency_s"] = round(time.monotonic() - t, 3)
-print(json.dumps(row))
-'''
-if EXPERIMENT_ID == "A":
-    mark("target_not_applicable", note="experiment A never contacts Railway or the AWS runtime endpoint")
-else:
-    name, url = TARGETS[EXPERIMENT_ID]
-    assert "PENDING" not in url, "experiment C needs the deployed AWS runtime endpoint (AWS_RUNTIME_URL)"
-    rcheck("target_marker", "before_target", stage=name, phase="before", target=name)             # no target request without a durable marker
-    t = time.monotonic(); row = {"target": name}
-    if EXPERIMENT_ID == "D":
-        # Same destination and request semantics, but from a short-lived child Python process (bounded lifetime; only this child is ever signalled).
-        child = subprocess.Popen([sys.executable, "-I", "-c", CHILD, url], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        mark("child_started", child_pid=child.pid)
-        try:
-            out, _ = child.communicate(timeout=90)
-            row.update(json.loads(out.strip().splitlines()[-1]) if out.strip() else {"exc": "NoOutput"})
-        except subprocess.TimeoutExpired:
-            child.kill(); child.communicate(); row["exc"] = "ChildTimeout"
-        except ValueError:
-            row["exc"] = "BadChildOutput"
-        row.update(child_pid=child.pid, child_exit=child.returncode)
-    else:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json", "Connection": "close"})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                row["http"] = r.status; r.read(4096)
-        except urllib.error.HTTPError as e:
-            row["http"] = e.code
-        except Exception as e:
-            row["exc"] = type(e).__name__
-        row["latency_s"] = row.get("latency_s") or round(time.monotonic() - t, 3)
-    row["wall_s"] = round(time.monotonic() - t, 3)
-    mark("target_end", **row)
-    after = rmark("after_target", stage=name, phase="after", target=name, http=row.get("http"), latency_s=row.get("latency_s"), exc=row.get("exc"),
-                  child_pid=row.get("child_pid"), child_exit=row.get("child_exit"))
-    # Independent outcomes: the HTTP request itself, and the durable after-marker. Survival is judged by the next cell.
-    verdict("target_request", "PASS" if row.get("http") == 200 else "FAIL", f"{row}", **{k: v for k, v in row.items() if k != "target"})
-    verdict("target_after_marker", "PASS" if after else "INCONCLUSIVE", f"after-marker {after['code']}")""", API=API_URL, AWSRT=AWS_RUNTIME_URL)
-    post = r"""# Post-target observation, in two SEPARATE phases so a termination can be attributed:
+mark("target_end", **row)
+after = rmark("after_target", stage="oci_health", phase="after", target="oci_health", http=row.get("http"), latency_s=row.get("latency_s"), exc=row.get("exc"))
+verdict("target_request", "PASS" if row.get("http") == 200 else "FAIL", f"{row}", **{k: v for k, v in row.items() if k != "target"})
+verdict("target_after_marker", "PASS" if after else "INCONCLUSIVE", f"after-marker {after['code']}")"""
+    post = r"""# Post-request observation, in two SEPARATE phases so a termination can be attributed:
 #   1) 60 s PASSIVE: no network at all; a local, printed tick every 2 s (the saved notebook output brackets a termination to ~2 s).
-#   2) 60 s ACTIVE: durable AWS markers at +5, +15, +30 and +60 s of that phase, each bracketed by local submit / result markers.
-if EXPERIMENT_ID != "A":
-    require("target_request", "target_after_marker")
-    observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)
-    observe("post_target_active_60s", 60, every=5, remote_at=(5, 15, 30, 60))
-else:
-    mark("post_target_not_applicable")"""
+#   2) 60 s ACTIVE: durable Enigma diagnostic markers at +5, +15, +30 and +60 s of that phase, each bracketed by local submit / result markers.
+require("target_request", "target_after_marker")
+observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)
+observe("post_target_active_60s", 60, every=5, remote_at=(5, 15, 30, 60))"""
     final = r"""# Overall verdict. Outcomes are reported separately: HTTP success, durable markers, survival windows, overall.
-REQUIRED = ["idle_10min", "controls_https", "controls_survival_120s", "diag_key_preflight", "aws_endpoint", "aws_survival"]
-if EXPERIMENT_ID != "A":
-    REQUIRED += ["target_request", "target_after_marker", "post_target_passive_60s", "post_target_active_60s"]
+REQUIRED = ["controls_https", "controls_survival_60s", "diag_key_preflight", "diag_endpoint", "diag_survival_120s", "target_request",
+            "target_after_marker", "post_target_passive_60s", "post_target_active_60s"]
 summary = {s: RESULTS.get(s, {}).get("status", "NOT_RUN") for s in REQUIRED}
-mark("outcomes", experiment_id=EXPERIMENT_ID, **summary)
+mark("outcomes", **summary)
 require(*REQUIRED)
-rcheck("overall", "final", verdict="PASS", note=f"experiment {EXPERIMENT_ID}: all {len(REQUIRED)} steps PASSED")
-verdict("overall", "PASS", f"experiment {EXPERIMENT_ID}: all {len(REQUIRED)} steps PASSED in this session (status code 44 root cause: NOT_ESTABLISHED)")"""
+rcheck("overall", "final", verdict="PASS", note=f"all {len(REQUIRED)} steps PASSED")
+verdict("overall", "PASS", f"all {len(REQUIRED)} steps PASSED in this session (a PASS here does not establish the cause of earlier Kaggle terminations)")"""
     return [
-        header("01. Kaggle platform + independent AWS networking diagnostics (experiments A-D)", "A troubleshooting control only: **no Stokastisk, no "
-               "CUDA, no LLM, no Enigma connector, no runtime token, no Git clone, no boto3, no AWS credential, no Docker/Kubernetes.** Choose ONE "
-               "experiment per FRESH session in the first code cell (`EXPERIMENT_ID`):\n\n"
-               "* **A (default): AWS-only.** 10-min offline idle, public HTTPS, credential preflight, AWS ack + duplicate test, 10 min AWS survival (past the uptime at which earlier sessions died). "
-               "Never contacts Railway.\n"
-               "* **B: Railway direct.** As A (2-min AWS window), then ONE durable before-marker, ONE Railway `/api/v1/health`, a durable after-marker, "
-               "60 s PASSIVE observation (no network, a printed tick every 2 s), then 60 s with 4 durable markers.\n"
-               "* **C: AWS runtime endpoint.** As B, but the one request goes to the optional AWS runtime API health endpoint instead of Railway.\n"
-               "* **D: Railway via a short-lived subprocess.** As B, but the same request runs in a bounded child Python process (pid + exit code "
-               "recorded).\n\n"
-               "Do not repeat B or D in the same session after an unexplained termination. Attach NO inputs; only the Kaggle Secret `ENIGMA_DIAG_KEY`."
-               f"\n\n{SECRETS_MD}\n\n"
-               "**Reading the result:** AWS (table `enigma-diag`, partition `ATT#<attempt>`) keeps every acknowledged marker even if the VM disappears; "
-               "the saved notebook output keeps the printed local ticks. Remote logging cannot capture the final instant of a VM termination. "
-               "Correlation is not a cause: only Kaggle's platform logs can explain a status-code-44 termination.", n),
+        header("01. Kaggle platform + OCI networking diagnostics", "A troubleshooting control only: **no Stokastisk, no CUDA, no LLM, no Enigma "
+               "connector, no runtime token, no Git clone, no cloud-provider credential, no Docker/Kubernetes, no idle wait.** Order: public HTTPS "
+               "controls and a short passive window; the diagnostic credential preflight; a durable diagnostic event on the OCI deployment plus an "
+               "identical resubmission that must come back as a stored duplicate; a 2-minute survival window with durable markers; ONE bounded "
+               "`/api/v1/health` request bracketed by durable markers; 60 s passive then 60 s active observation. Attach NO inputs; only the Kaggle "
+               f"Secret `ENIGMA_DIAG_KEY`.\n\n{SECRETS_MD}\n\n"
+               "**Reading the result:** the OCI deployment keeps every acknowledged marker (`diag_events`, keyed by attempt and sequence) even if the "
+               "Kaggle VM disappears; the saved notebook output keeps the printed local ticks. Remote logging cannot capture the final instant of a VM "
+               "termination, and correlation is not a cause: only Kaggle's platform logs can explain a status-code-44 termination. While the OCI "
+               "endpoint is not deployed, the diagnostic step reports BLOCKED and nothing is sent.", n),
         prelude(n),
         code(sub(REMOTE, DIAG=DIAG_URL)),
-        md("## 01a. Idle survival: 10 minutes, PASSIVE, no network at all (no secret is read yet)"),
-        code('observe("idle_10min", 600, every=15)'),
-        md("## 01b. Ordinary public HTTPS controls, then 2 minutes of PASSIVE survival"),
+        md("## 01a. Ordinary public HTTPS controls, then 60 s of PASSIVE survival (no secret is read yet)"),
         code(controls),
-        code('require("controls_https")\nobserve("controls_survival_120s", 120, every=15)'),
-        md("## 01c. Diagnostic credential preflight (re-runnable)\nReads `ENIGMA_DIAG_KEY` (a request to Kaggle's own secret service, nothing else) "
-           "and checks its type and format locally. On a problem: fix the secret in the sidebar, then re-run **this cell only**; no new 10-minute idle "
-           "observation is needed in the same healthy session."),
-        code('require("controls_survival_120s")\nrefresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
-        md("## 01d. Independent AWS diagnostic endpoint: first event, then an identical resubmission that must come back as a durable duplicate"),
+        code('require("controls_https")\nobserve("controls_survival_60s", 60, every=10)'),
+        md("## 01b. Diagnostic credential preflight (re-runnable)\nReads `ENIGMA_DIAG_KEY` (a request to Kaggle's own secret service, nothing else) "
+           "and checks its type and format locally. On a problem: fix the secret in the sidebar, then re-run **this cell only**."),
+        code('require("controls_survival_60s")\nrefresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
+        md("## 01c. OCI diagnostic endpoint: first event, then an identical resubmission that must come back as a durable duplicate"),
         code(DIAG_PROBE),
-        md("## 01e. AWS survival window (durable observation-start marker first; bounded markers)"),
-        code(aws_window),
-        md("## 01f. Experiments B / C / D only: the ONE target request (durable markers before and after)"),
+        md("## 01d. Survival window with durable markers (observation-start marker first; 4 bounded markers)"),
+        code('require("diag_endpoint")\nobserve("diag_survival_120s", 120, every=15, remote_at=(30, 60, 90, 120), durable_begin=True)'),
+        md("## 01e. The ONE OCI health request (durable markers before and after)"),
         code(target),
-        md("## 01g. Experiments B / C / D only: passive, then active post-target observation"),
+        md("## 01f. Passive, then active post-request observation"),
         code(post),
-        md("## 01h. Outcomes and overall verdict"),
+        md("## 01g. Outcomes and overall verdict"),
         code(final),
-        md("## Evidence export (local, redacted; the AWS record is the durable copy). Run it even after a stop."),
+        md("## Evidence export (local, redacted; the OCI record is the durable copy). Run it even after a stop."),
         code(EXPORT),
     ]
 
@@ -575,21 +513,22 @@ verdict("overall", "PASS", f"experiment {EXPERIMENT_ID}: all {len(REQUIRED)} ste
 def nb_02() -> list[dict]:
     n = "02_stokastisk_build5_kaggle_t4_validation"
     mode = r"""# 02-0. Experimental mode (set VALIDATION_MODE in the first code cell, before running anything).
-#   Mode A "standalone":   strict standalone GPU validation. No AWS diagnostic traffic, no Kaggle Secret read, local evidence only.
-#   Mode B "aws-assisted": ENIGMA_DIAG_KEY is validated and a durable AWS acknowledgement is verified HERE, before any expensive GPU installation or
-#                          model start; critical install / server / inference / shutdown markers are persisted to AWS. NOT cloud-independent.
-# Neither mode sends anything to Railway or Enigma, and neither uses an Enigma runtime token.
-REMOTE_ENABLED = VALIDATION_MODE == "aws-assisted"
+#   Mode A "standalone":   strict standalone GPU validation. No network traffic to Enigma, no Kaggle Secret read, local evidence only (the default;
+#                          independent of OCI availability).
+#   Mode B "oci-assisted": ENIGMA_DIAG_KEY is validated and a durable acknowledgement from the OCI diagnostic route is verified HERE, before any expensive
+#                          GPU installation or model start; critical install / server / inference / shutdown markers are persisted there. NOT cloud-independent.
+# Neither mode touches Enigma's runtime plane, and neither uses an Enigma runtime token.
+REMOTE_ENABLED = VALIDATION_MODE == "oci-assisted"
 mark("mode_selected", remote_enabled=REMOTE_ENABLED)
 if REMOTE_ENABLED:
     refresh_credentials("ENIGMA_DIAG_KEY")
     check_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")
-    first = rmark("aws_first_event", stage="mode", note="aws-assisted GPU validation")
+    first = rmark("diag_first_event", stage="mode", note="oci-assisted GPU validation")
     if not first:
         verdict("remote_ready", "INCONCLUSIVE", f"{first['code']}: {DIAG_GUIDANCE.get(first['code'], '')} (stopping before any GPU work)")
-    verdict("remote_ready", "PASS", f"Mode B aws-assisted: durable AWS acknowledgement seq={first.get('seq')}")
+    verdict("remote_ready", "PASS", f"Mode B oci-assisted: durable OCI diagnostic acknowledgement seq={first.get('seq')}")
 else:
-    verdict("remote_ready", "PASS", "Mode A standalone: no AWS diagnostic traffic and no secret read; local evidence only")"""
+    verdict("remote_ready", "PASS", "Mode A standalone: no network traffic to Enigma and no secret read; local evidence only")"""
     env = r"""require("remote_ready")
 import importlib.metadata as md
 g = gpu_query()
@@ -608,15 +547,15 @@ def passive_sample():
 observe("server_passive_10min", 600, every=15, sample=passive_sample)
 mark("server_log_tail", log_tail=server.log_tail(20))"""
     return [
-        header("02. Stokastisk build 5: Kaggle 2×T4 validation (Mode A standalone / Mode B AWS-assisted)", f"Immutable `stokastisk-0.1.0-5` only "
+        header("02. Stokastisk build 5: Kaggle 2×T4 validation (Mode A standalone / Mode B OCI-assisted)", f"Immutable `stokastisk-0.1.0-5` only "
                f"(size + SHA-256 verified before install). {MODEL}, FP16, TRITON_ATTN, TP=1, PP=1, 2048 tokens, gpu_memory_utilization 0.60. **No "
-               "Enigma / Railway connection and no runtime token in either mode.** Choose the mode in the first code cell: `standalone` (default; no "
-               "secret needed) or `aws-assisted` (needs the Kaggle Secret `ENIGMA_DIAG_KEY`; stops before any GPU work if AWS does not acknowledge)."
+               "Enigma runtime connection and no runtime token in either mode.** Choose the mode in the first code cell: `standalone` (default; no "
+               "secret needed) or `oci-assisted` (needs the Kaggle Secret `ENIGMA_DIAG_KEY`; stops before any GPU work if the OCI diagnostic route does not acknowledge)."
                f"\n\n{SECRETS_MD}", n),
         prelude(n),
         code(GPU_HELPERS),
         code(sub(REMOTE, DIAG=DIAG_URL)),
-        md("## 02-0. Mode and (Mode B only) diagnostic credential + durable AWS acknowledgement. Re-runnable after fixing the secret."),
+        md("## 02-0. Mode and (Mode B only) diagnostic credential + durable OCI acknowledgement. Re-runnable after fixing the secret."),
         code(mode),
         md("## 02a. Environment (Python 3.13, 2×T4, Kaggle's torch / triton / transformers)"),
         code(env),
@@ -641,7 +580,7 @@ mark("server_log_tail", log_tail=server.log_tail(20))"""
 NB03_ENV = r"""# 03-0. GPU environment guard (local only: nvidia-smi in a separate process, /proc, a loopback socket; no network, no CUDA in this kernel).
 # The same inventory approach as the verified notebook 02, plus SM75, free GPU memory, host memory and "no inference server already running".
 EXPERIMENT = f"build5-{INTEGRATION_MODE}"              # every later MARK names the integration mode
-assert INTEGRATION_MODE in ("aws-staging", "aws-production", "railway-comparison"), INTEGRATION_MODE
+assert INTEGRATION_MODE in ("oci-production",), INTEGRATION_MODE
 import importlib.metadata as md, socket
 g = gpu_query()
 names = [x.get("name") for x in g.get("gpus", [])]
@@ -697,23 +636,16 @@ verdict("baseline_manifest", "PASS" if not bad else "INCONCLUSIVE",
         f"HISTORICAL: nb01 {BASELINE['nb01']['attempt']} expA PASS; nb02 {b2['attempt']} inference/600 s/shutdown PASS; wheel {b2['wheel']['sha256'][:16]}..."
         + (f"; FAILED checks {bad}" if bad else "; current environment equals the validated one"), checks=checks)"""
 
-NB03_CAPABILITY = r"""# 03-3. Capability gate: EVIDENCE from the SELECTED runtime endpoint only (the other endpoints are never contacted). One public, unauthenticated
-# health probe (no credential), bracketed by REQUIRED durable AWS markers. aws-production is BLOCKED (no request at all) until the production AWS runtime
-# endpoint exists; railway-comparison needs ALLOW_RAILWAY_COMPARISON = True. HTTP 200 alone is never readiness: the schema, the deployment label, the
-# store, the auth provider and the data-plane fingerprint fixed at generation time must all match the selected mode.
-require("baseline_manifest", "aws_endpoint", "runtime_token_preflight")
-MODES = {"aws-staging": {"url": "__AWSRT__", "expect": {"deployment": "aws-staging-isolated", "store": "dynamodb", "auth": "cognito", "data_plane": "__DP_STAGING__"}},
-         "aws-production": {"url": "__AWSPROD__", "expect": {"deployment": "production", "store": "dynamodb", "auth": "cognito", "data_plane": "__DP_PROD__"}},
-         "railway-comparison": {"url": "__API__", "expect": {"deployment": "production", "store": "postgres", "auth": "neon", "data_plane": "__DP_RAILWAY__"}}}
-SCOPE = {"aws-staging": "STAGING", "aws-production": "PRODUCTION", "railway-comparison": "RAILWAY-COMPARISON"}[INTEGRATION_MODE]
+NB03_CAPABILITY = r"""# 03-3. Capability gate: EVIDENCE from the OCI deployment only. One public, unauthenticated health probe (no credential), bracketed by REQUIRED
+# durable diagnostic markers. BLOCKED (no request at all) while OCI_BASE_URL is empty. HTTP 200 alone is never readiness: the schema, the deployment
+# label, the store, the auth provider and the data-plane fingerprint fixed at generation time must all match.
+require("baseline_manifest", "diag_endpoint", "runtime_token_preflight")
+MODES = {"oci-production": {"url": "__OCI__", "expect": {"deployment": "oci-a1", "store": "postgres", "auth": "betterauth", "data_plane": "__DP_OCI__"}}}
+SCOPE = "PRODUCTION"
 API_URL = MODES[INTEGRATION_MODE]["url"]                # fixed for the attempt; the connector is given only this URL and never falls back
-if INTEGRATION_MODE == "aws-production" and not API_URL:
-    verdict("runtime_capabilities", "INCONCLUSIVE", "BLOCKED: the AWS PRODUCTION runtime endpoint does not exist yet (production still runs on Railway + Neon; "
-            "the DynamoDB + Cognito cutover is pending). No request was sent and no GPU work runs. Use INTEGRATION_MODE = \"aws-staging\" for the isolated "
-            "staging integration; do not bypass this gate.", blocked=True)
-if INTEGRATION_MODE == "railway-comparison" and not ALLOW_RAILWAY_COMPARISON:
-    verdict("runtime_capabilities", "INCONCLUSIVE", "BLOCKED: railway-comparison contacts Railway from Kaggle; set ALLOW_RAILWAY_COMPARISON = True deliberately",
-            blocked=True)
+if not API_URL:
+    verdict("runtime_capabilities", "INCONCLUSIVE", "BLOCKED: the OCI deployment does not exist yet (OCI_BASE_URL is empty). No request was sent and no GPU "
+            "work runs; notebook 02 standalone remains available. Do not bypass this gate.", blocked=True)
 ALLOWED_HOST = urllib.parse.urlsplit(API_URL).hostname
 rcheck("capability_marker", "before_capability_probe", stage="capability", phase="before", target=RUNTIME_TRANSPORT, note=INTEGRATION_MODE)
 probe = probe_health(API_URL, ALLOWED_HOST, wall_timeout=20.0)
@@ -734,8 +666,8 @@ verdict("runtime_capabilities", "PASS" if ok else "INCONCLUSIVE",
         deployment=body.get("deployment"), store=body.get("store"), auth=body.get("auth"), data_plane=body.get("data_plane"))"""
 
 NB03_IDENTITY = r"""# 03-4. Runtime credential: ACTUAL authentication against the selected endpoint, before any GPU work. One read-only, side-effect-free
-# GET /api/v1/runtimes/me (no registration, no job operation). Requires a REAL (non-mock) runtime. In aws-staging the secret ENIGMA_RUNTIME_TOKEN must
-# hold the STAGING runtime token (scripts/aws_staging_runtime.py provision); a production token is not known to the staging table and fails here (401).
+# GET /api/v1/runtimes/me (no registration, no job operation). Requires a REAL (non-mock) runtime whose token was issued by the OCI deployment's web app
+# (tokens issued by the retired Railway deployment are migrated with their hashes; a revoked or expired token fails here with 401).
 require("runtime_capabilities")
 rcheck("identity_marker", "before_runtime_identity", stage="identity", phase="before", target=RUNTIME_TRANSPORT)
 _tok, _res = get_credential("ENIGMA_RUNTIME_TOKEN")
@@ -763,9 +695,9 @@ verdict("runtime_identity", "PASS" if ok else "INCONCLUSIVE",
         f"http {st}; real runtime={who.get('is_mock') is False}; durable after-marker={bool(after)}" + (f" | {hint}" if hint and not ok else ""),
         runtime_id=who.get("runtime_id"), is_mock=who.get("is_mock"))"""
 
-NB03_SURVIVAL = r"""# 03-5. Post-capability survival gate. Every fatal Kaggle session so far ended seconds after a Railway response; nothing is installed until this
+NB03_SURVIVAL = r"""# 03-5. Post-capability survival gate. Earlier fatal Kaggle sessions ended seconds after a cloud response (cause NOT established); nothing is installed until this
 # session demonstrably survives its endpoint contact. Durable start marker -> 90 s PASSIVE window (local, fsynced, printed ticks every 2 s for 30 s,
-# then every 5 s; no network) -> durable completion marker. If the whole VM is terminated, only the markers already stored in AWS remain.
+# then every 5 s; no network) -> durable completion marker. If the whole VM is terminated, only the markers already stored on the OCI deployment remain.
 require("runtime_identity")
 observe("post_capability_survival", 90, every=5, dense_first_s=30, dense_every=2, durable_begin=True)
 rcheck("post_capability_survival_marker", "post_capability_survival_complete", stage="survival", phase="after", verdict="PASS")"""
@@ -800,7 +732,7 @@ def stage(name, **kw):
     after = rmark(f"after_stage_{name}", stage=name, phase="after", exit_code=res["exit"]["returncode"], signal=res["exit"].get("killed_by_signal"), verdict=status)
     verdict(f"stage_{name}", status, f"rc={res['exit']['returncode']} failed={failed}", run_id=(res.get("summary") or {}).get("run_id"), stats=stats)
     # ... and a passed stage whose required durable evidence is missing can never satisfy the acceptance gate.
-    verdict(f"stage_{name}_evidence", "PASS" if after else "INCONCLUSIVE", f"after-stage AWS marker {after.get('code')}")
+    verdict(f"stage_{name}_evidence", "PASS" if after else "INCONCLUSIVE", f"after-stage diagnostic marker {after.get('code')}")
     return res"""
 
 NB03_CLOUD_GATE = r"""# 03-7. Cloud gate (evidence, not a checkbox): the selected endpoint's capabilities and the REAL runtime identity were verified before any GPU work,
@@ -819,15 +751,15 @@ rmark("shutdown_done", stage="shutdown", phase="after", verdict="PASS" if ok els
 verdict("server_shutdown", "PASS" if ok else "FAIL", f"{rep}")"""
 
 NB03_OVERALL = r"""# 03-10. OVERALL acceptance. Run it last, also after a stop (it reads this session's verdicts only). PASS needs EVERY step below, including safe
-# shutdown and a durable final AWS verdict. The scope is stated explicitly: STAGING acceptance is never production acceptance.
-REQUIRED = ["environment", "diag_key_preflight", "runtime_token_preflight", "aws_endpoint", "baseline_manifest", "runtime_capabilities", "runtime_identity",
+# shutdown and a durable final diagnostic verdict on the OCI deployment.
+REQUIRED = ["environment", "diag_key_preflight", "runtime_token_preflight", "diag_endpoint", "baseline_manifest", "runtime_capabilities", "runtime_identity",
             "post_capability_survival", "wheel_verified", "install_plan", "install", "server_start", "local_inference", "connector_fetch", "cloud_gate",
             *[f"stage_{s}{e}" for s in ("nvml", "vllm", "register", "heartbeat", "jobs", "upload-once", "telemetry", "full") for e in ("", "_evidence")],
             "server_shutdown"]
 got = {s: RESULTS.get(s, {}).get("status", "NOT_RUN") if RESULTS.get(s, {}).get("attempt") in (ATTEMPT, None) else "STALE" for s in REQUIRED}
 if all(v == "PASS" for v in got.values()):
     outcome = "PASS"
-elif RESULTS.get("runtime_capabilities", {}).get("blocked"):
+elif any(RESULTS.get(s, {}).get("blocked") for s in ("runtime_capabilities", "diag_endpoint")):
     outcome = "BLOCKED"
 elif any(v == "FAIL" for v in got.values()):
     outcome = "FAIL"
@@ -837,7 +769,7 @@ fin = rmark("overall", stage="overall", verdict=outcome, note=f"{globals().get('
 if outcome == "PASS" and not fin:
     outcome = "INCONCLUSIVE"                          # the final remote verdict is required evidence
 scope = globals().get("SCOPE", INTEGRATION_MODE.upper())
-label = {"PASS": f"{scope} INTEGRATION ACCEPTED" + (" (isolated staging data; NOT production acceptance)" if scope == "STAGING" else "")}.get(outcome, outcome)
+label = {"PASS": f"{scope} INTEGRATION ACCEPTED (OCI)"}.get(outcome, outcome)
 RESULTS["overall"] = {"status": outcome, "reason": label, "attempt": ATTEMPT, "steps": got}
 mark("verdict", step="overall", status=outcome, reason=label, steps=got, final_remote=fin.get("code"))
 print(json.dumps(got, indent=1), flush=True)
@@ -857,39 +789,31 @@ print(json.dumps({k: {"status": v["status"], "reason": v["reason"]} for k, v in 
 
 
 def nb_03() -> list[dict]:
-    n = "03_enigma_stokastisk_build5_aws_integration"
+    n = "03_enigma_stokastisk_build5_oci_integration"
     base_json = json.dumps(BASELINE, sort_keys=True, separators=(",", ":"))
     baseline = sub(NB03_BASELINE, BASELINE_JSON=repr(base_json), BASELINE_SHA=BASELINE["manifest_sha256"], SHA=WHEEL_SHA256, SIZE=str(WHEEL_SIZE), MODEL=MODEL)
-    capability = sub(NB03_CAPABILITY, AWSRT=AWS_RUNTIME_URL, AWSPROD=AWS_RUNTIME_PROD_URL, API=API_URL, DP_STAGING=DATA_PLANES["aws-staging"],
-                     DP_PROD=DATA_PLANES["aws-production"], DP_RAILWAY=DATA_PLANES["railway-comparison"])
+    capability = sub(NB03_CAPABILITY, OCI=OCI_BASE_URL.rstrip("/"), DP_OCI=DATA_PLANES["oci-production"])
     full_md = ("## 03-8e. Full connector with one real Playground inference (600 s)\nStart this cell, wait for `stage_full` to begin, then submit ONE prompt:\n\n"
-               "* **aws-staging** (isolated staging data): on your computer run `AWS_PROFILE=enigma-deployer python3.13 scripts/aws_staging_runtime.py submit` "
-               "in the Enigma repository. It submits a Playground job to the staging runtime, waits for this GPU to complete it and prints the reply "
-               "(`STAGING_PLAYGROUND_JOB_PASS`). The Railway web app does NOT show staging data.\n"
-               "* **aws-production** / **railway-comparison**: open https://enigma-web-production-8986d34a.up.railway.app/app/runtimes, select the real "
-               "runtime, open Playground and submit one prompt; confirm the streamed reply persisted in the UI.\n\n"
+               "Open the Enigma web app on the OCI deployment (`<OCI_BASE_URL>/app/runtimes`), sign in, select the real runtime, open Playground and "
+               "submit ONE prompt; confirm the streamed reply and the GPU charts in the UI.\n\n"
                "PASS requires at least one completed job and no failed job.")
     return [
-        header("03. Enigma + Stokastisk build 5: AWS runtime integration", "**Prepared; NOT yet executed end to end (no GPU or Playground acceptance "
-               "exists for this notebook).** `INTEGRATION_MODE` (first code cell, fixed for the attempt): `aws-staging` (default) = the AWS runtime "
-               "endpoint (the same FastAPI app on Lambda) on its ISOLATED staging table: STAGING acceptance only; `aws-production` = the AWS runtime "
-               "endpoint on production data: BLOCKED until the DynamoDB + Cognito production cutover (stops before any request or GPU work); "
-               "`railway-comparison` = Railway direct, only with `ALLOW_RAILWAY_COMPARISON = True`. In the AWS modes this notebook never contacts "
-               "Railway. Order: GPU environment guard; both credential preflights; a durable AWS diagnostic acknowledgement; the historical baseline "
-               "manifest (notebooks 01 + 02, digest-verified); the capability gate (HTTP, schema, deployment, durable evidence: four separate results); "
-               "real runtime authentication (read-only); a 90 s post-capability survival gate; then immutable build 5, real local Qwen inference, the "
-               "reviewed connector in its own supervised subprocess with explicit intervals, offline NVML and vLLM stages, registration, heartbeat, idle "
-               "job polling, single and continuous telemetry, the full connector with one real Playground job, build-5-safe shutdown and an OVERALL "
-               f"verdict (PASS / FAIL / INCONCLUSIVE / BLOCKED, with its scope).\n\n{SECRETS_MD} **aws-staging:** `ENIGMA_RUNTIME_TOKEN` must hold the "
-               "STAGING runtime token (the content of `.enigma-local/ENIGMA_STAGING_RUNTIME_TOKEN.txt`, created by `scripts/aws_staging_runtime.py "
-               "provision`); the production token is rejected by the staging endpoint before any GPU work.", n),
+        header("03. Enigma + Stokastisk build 5: OCI runtime integration", "**Prepared; NOT yet executed end to end (no GPU or Playground acceptance "
+               "exists for this notebook).** One integration mode, `oci-production`: the Enigma API on the OCI Always Free deployment, reached by "
+               "outbound HTTPS only (no tunnel; the local vLLM server stays on loopback). BLOCKED before any request or GPU work while the deployment "
+               "does not exist. Order: GPU environment guard; both credential preflights; a durable diagnostic acknowledgement; the historical "
+               "baseline manifest (notebooks 01 + 02, digest-verified); the capability gate (HTTP, schema, deployment, durable evidence: four "
+               "separate results); real runtime authentication (read-only); a 90 s post-capability survival gate; then immutable build 5, real local "
+               "Qwen inference, the reviewed connector in its own supervised subprocess with explicit intervals, offline NVML and vLLM stages, "
+               "registration, heartbeat, idle job polling, single and continuous telemetry, the full connector with one real Playground job, "
+               f"build-5-safe shutdown and an OVERALL verdict (PASS / FAIL / INCONCLUSIVE / BLOCKED).\n\n{SECRETS_MD}", n),
         prelude(n),
         code(GPU_HELPERS),
         code(sub(REMOTE, DIAG=DIAG_URL)),
         code(CAPABILITY),
         md("## 03-0. GPU environment guard (local only)"),
         code(NB03_ENV),
-        md("## 03-1. Credential preflight and a durable AWS acknowledgement (each credential cell re-runnable on its own)"),
+        md("## 03-1. Credential preflight and a durable OCI diagnostic acknowledgement (each credential cell re-runnable on its own)"),
         code('require("environment")\nrefresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
         code('refresh_credentials("ENIGMA_RUNTIME_TOKEN")\ncheck_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")   # format/type only; '
              'the live check is 03-4'),
@@ -934,8 +858,8 @@ def nb_03() -> list[dict]:
     ]
 
 
-BUILDERS = {"01_enigma_kaggle_platform_aws_diagnostics": nb_01, "02_stokastisk_build5_kaggle_t4_validation": nb_02,
-            "03_enigma_stokastisk_build5_aws_integration": nb_03}
+BUILDERS = {"01_enigma_kaggle_platform_oci_diagnostics": nb_01, "02_stokastisk_build5_kaggle_t4_validation": nb_02,
+            "03_enigma_stokastisk_build5_oci_integration": nb_03}
 
 
 def render(name: str) -> str:

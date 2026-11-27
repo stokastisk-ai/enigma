@@ -196,8 +196,13 @@ reset role;
 reset role;
 select zz_check('enigma_app is not superuser and cannot bypass RLS',
   (select not rolsuper and not rolbypassrls and not rolcreatedb and not rolcreaterole and not rolcanlogin from pg_roles where rolname = 'enigma_app'));
-select zz_check('no RLS/auth/realtime objects leaked into the portable schema',
-  not exists (select 1 from pg_policies) and not exists (select 1 from pg_namespace where nspname in ('auth','realtime')));
+select zz_check('no RLS policies or realtime schema in the portable schema',
+  not exists (select 1 from pg_policies) and not exists (select 1 from pg_namespace where nspname = 'realtime'));
+-- `auth` is the self-hosted Better Auth schema (0004): it may exist, but the API group role must have no access to it at all.
+select zz_check('API group role has no access to the auth schema or its tables',
+  to_regnamespace('auth') is null or (not has_schema_privilege('enigma_app', 'auth', 'usage')
+    and not exists (select 1 from pg_class c where c.relnamespace = 'auth'::regnamespace and c.relkind = 'r'
+                    and (has_table_privilege('enigma_app', c.oid, 'select') or has_table_privilege('enigma_app', c.oid, 'insert')))));
 select zz_check('PUBLIC has no EXECUTE on any enigma_ function',
   not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                where n.nspname = 'public' and p.proname like 'enigma\_%' and has_function_privilege('public', p.oid, 'execute')));

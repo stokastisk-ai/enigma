@@ -7,7 +7,7 @@ TEXT = (ROOT / "docs" / "kaggle" / "enigma_isolation_cells.md").read_text()
 
 
 def test_index_lists_the_three_notebooks_and_they_exist():
-    for n in ("01_enigma_kaggle_platform_aws_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_aws_integration"):
+    for n in ("01_enigma_kaggle_platform_oci_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_oci_integration"):
         assert f"{n}.ipynb" in TEXT and (ROOT / "docs" / "kaggle" / "diagnostics" / f"{n}.ipynb").is_file()
 
 

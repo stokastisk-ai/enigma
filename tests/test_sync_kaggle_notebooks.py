@@ -21,11 +21,11 @@ def test_creates_then_reports_unchanged(tmp_path):
 
 def test_a_differing_destination_file_is_backed_up_before_it_is_replaced(tmp_path):
     sync.sync(tmp_path)
-    target = tmp_path / "01_enigma_kaggle_platform_aws_diagnostics.ipynb"
+    target = tmp_path / "01_enigma_kaggle_platform_oci_diagnostics.ipynb"
     target.write_text('{"my": "edited copy"}')
     rows = {Path(r["path"]).name: r["action"] for r in sync.sync(tmp_path)}
-    assert rows["01_enigma_kaggle_platform_aws_diagnostics.ipynb"] == "updated"
-    backups = list(tmp_path.glob("01_enigma_kaggle_platform_aws_diagnostics.ipynb.*.bak"))
+    assert rows["01_enigma_kaggle_platform_oci_diagnostics.ipynb"] == "updated"
+    backups = list(tmp_path.glob("01_enigma_kaggle_platform_oci_diagnostics.ipynb.*.bak"))
     assert len(backups) == 1 and backups[0].read_text() == '{"my": "edited copy"}'
 
 

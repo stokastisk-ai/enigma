@@ -1,6 +1,6 @@
 # Survival observation (shared; generated from scripts/kaggle_cells/observe.py). PASSIVE by default: local, fsynced, printed MARK lines only (no
 # network at all), with explicit sleep-begin / sleep-end markers, so the saved notebook output brackets a platform termination to within one tick.
-# Remote AWS markers are OPT-IN at a few explicit offsets (bounded: at most 12 per window), each bracketed by local remote-submit / remote-ack markers.
+# Remote diagnostic markers (OCI deployment) are OPT-IN at a few explicit offsets (bounded: at most 12 per window), each bracketed by local remote-submit / remote-ack markers.
 # A missing cgroup OOM counter is reported as "unavailable", never as 0.
 def oom_kill_count():
     ev = host()["cgroup_events"]
@@ -19,8 +19,8 @@ def tick_schedule(seconds, every, dense_first_s=0.0, dense_every=2.0):
 
 
 def observe(step, seconds, every=15.0, dense_first_s=0.0, dense_every=2.0, remote_at=(), sample=None, durable_begin=False):
-    """Survival window. remote_at: offsets (s) where ONE bounded AWS marker is sent (active sampling); () = fully passive.
-    durable_begin: the window starts only after AWS acknowledged an observation-start marker. PASS = full duration elapsed, no OOM kill observed,
+    """Survival window. remote_at: offsets (s) where ONE bounded diagnostic marker is sent (active sampling); () = fully passive.
+    durable_begin: the window starts only after the OCI deployment acknowledged an observation-start marker. PASS = full duration elapsed, no OOM kill observed,
     no failed sample, and every requested remote marker acknowledged."""
     remote_at = sorted(float(x) for x in remote_at)
     assert len(remote_at) <= 12, "remote markers per window are bounded"

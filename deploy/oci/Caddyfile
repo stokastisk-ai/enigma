@@ -1,0 +1,67 @@
+# Enigma public edge. Automatic HTTPS from Let's Encrypt (publicly trusted) for {$ENIGMA_HOST}, which may be the VM's public IPv4 address itself (no
+# domain needed) or a DNS name. IP certificates require the ACME "shortlived" profile (160 h); it is requested for every host so renewal behaviour
+# is identical. Caddy renews automatically using ACME Renewal Information (verified 2026-11-27 with Caddy 2.10.2 against Pebble: IP SAN issued, 160 h
+# lifetime, unattended renewal without restart). Port 80 only answers ACME http-01 and redirects. enigma-certcheck.timer alerts below 72 h left.
+# Public surface:
+#   * the Next.js app (pages, /api/auth/*, the authenticated BFF /api/enigma/*)
+#   * the Kaggle connector's runtime plane on FastAPI (bearer runtime tokens) and the health probe
+# Everything else under /api/v1 (tenant app routes, admin/prune) is 404 here: only the BFF reaches it, over the private network.
+# Nothing sits in front of Caddy, so no proxy is trusted: client-sent X-Forwarded-* headers are replaced with the real client address.
+{
+	admin off
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$ENIGMA_HOST} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	request_body {
+		max_size 2MB
+	}
+
+	@runtime path_regexp ^/api/v1/(health|runtimes/register|runtimes/me|telemetry/batch|jobs/claim|runtimes/[0-9a-f-]{36}/heartbeat|jobs/[0-9a-f-]{36}/(events|complete|fail|ack-cancel|status)|diag/(attempts|events))$
+	handle @runtime {
+		reverse_proxy api:8000 {
+			flush_interval -1
+			transport http {
+				response_header_timeout 60s
+			}
+		}
+	}
+
+	@private path /api/v1 /api/v1/*
+	handle @private {
+		respond "not found" 404
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			flush_interval -1
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

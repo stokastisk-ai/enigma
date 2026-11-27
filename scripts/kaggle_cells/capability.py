@@ -4,7 +4,7 @@
 #   CAPABILITY_HTTP_RESULT              the request itself (status / transport error class)
 #   CAPABILITY_SCHEMA_RESULT            the body is the expected JSON object with typed fields and the expected API contract
 #   CAPABILITY_DEPLOYMENT_RESULT        deployment label, store, auth provider AND the data-plane fingerprint equal the values expected for the mode
-#   CAPABILITY_DURABLE_EVIDENCE_RESULT  AWS acknowledged BOTH the before- and the after-probe diagnostic markers
+#   CAPABILITY_DURABLE_EVIDENCE_RESULT  the OCI deployment acknowledged BOTH the before- and the after-probe diagnostic markers
 import ssl, threading, urllib.error, urllib.parse, urllib.request
 
 HEALTH_SCHEMA = {"ok": bool, "version": str, "api_contract": int, "store": str, "auth": str, "deployment": str, "data_plane": str}

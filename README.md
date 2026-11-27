@@ -12,7 +12,9 @@ tests/              pytest (API, connector, SQL), docs/ architecture, security, 
 ```
 
 ## Hosting
-Railway: `apps/web/Dockerfile` (Next.js standalone) and `apps/api/Dockerfile` (uvicorn), built from the repository root. Data is stored in Neon serverless PostgreSQL (no database runs on Railway) and sign-in is Neon Managed Better Auth. Both app services use Railway Serverless and sleep when idle. A daily GitHub Actions job prunes old telemetry (`.github/workflows/retention.yml`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Target (branch `migration/oci-always-free`, not yet deployed): one Oracle Cloud Always Free Ampere A1 VM running Docker Compose: PostgreSQL 18, the FastAPI API, the Next.js web app with self-hosted Better Auth, and Caddy for automatic HTTPS. Only Caddy is public; tenant and admin API routes are reachable only through the web BFF. Inference stays on a Kaggle 2×T4 GPU host that connects outbound over HTTPS. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Current (until the owner approves the cutover): Railway web + API, Neon PostgreSQL and Neon Managed Better Auth.
 
 ## Local quick start (mock data, no credentials, CPU only)
 ```bash

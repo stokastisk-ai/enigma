@@ -106,8 +106,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
 
     from .routes_app import admin as admin_router
     from .routes_app import router as app_router
+    from .diag import backend_for as diag_backend
+    from .diag import router as diag_router
     from .routes_runtime import router as rt_router
+    app.state.diag = diag_backend(store)
     app.include_router(rt_router)
+    app.include_router(diag_router)
     app.include_router(app_router)
     app.include_router(admin_router)
 

@@ -57,7 +57,7 @@ class Resp:
 
 def http_error(code, body=b"{}"):
     import io
-    return urllib.error.HTTPError("https://x.lambda-url.us-east-1.on.aws/", code, "err", {}, io.BytesIO(body))
+    return urllib.error.HTTPError("https://enigma.example.test/api/v1/diag/events", code, "err", {}, io.BytesIO(body))
 
 
 class FakeOpener:
@@ -92,7 +92,7 @@ def nb(capsys):
             raise Stop(f"{step} {status}: {reason}")
 
     ns.update(mark=mark, verdict=verdict, ATTEMPT="20261127T000000Z-test0001", NOTEBOOK="nb", EXPERIMENT="no-sdk")
-    exec(compile(CRED_SRC.replace("__DIAG__", "https://abc.lambda-url.us-east-1.on.aws/"), "diag_credentials.py", "exec"), ns)
+    exec(compile(CRED_SRC.replace("__DIAG__", "https://enigma.example.test/api/v1/diag/events"), "diag_credentials.py", "exec"), ns)
     ns["_marks"], ns["_verdicts"] = marks, verdicts
     ns["_secrets"] = FakeSecrets({"ENIGMA_DIAG_KEY": DIAG, "ENIGMA_RUNTIME_TOKEN": RT})
     ns["_secret_client"] = lambda: ns["_secrets"]
@@ -307,12 +307,20 @@ def test_rcheck_stops_on_a_failed_required_marker(nb):
         nb["rcheck"]("railway_marker", "before_railway")
 
 
-def test_only_the_configured_https_lambda_host_is_allowed(nb):
+def test_only_the_configured_oci_host_and_diag_path_are_allowed(nb):
     ok = nb["_diag_url_ok"]
-    assert ok("https://abc.lambda-url.us-east-1.on.aws/")
-    for bad in ("http://abc.lambda-url.us-east-1.on.aws/", "https://evil.example/", "https://abc.lambda-url.us-east-1.on.aws.evil.example/",
-                "https://u:p@abc.lambda-url.us-east-1.on.aws/"):
+    assert ok("https://enigma.example.test/api/v1/diag/events")
+    for bad in ("http://enigma.example.test/api/v1/diag/events", "https://evil.example/api/v1/diag/events",
+                "https://enigma.example.test.evil.example/api/v1/diag/events", "https://u:p@enigma.example.test/api/v1/diag/events",
+                "https://enigma.example.test:8443/api/v1/diag/events", "https://enigma.example.test/api/v1/jobs/claim",
+                "https://enigma.example.test/api/v1/diag/events?x=1", "https://abc.lambda-url.us-east-1.on.aws/"):
         assert not ok(bad), bad
+
+
+def test_an_empty_configured_url_allows_nothing(nb):
+    ns = dict(nb)
+    exec(compile(CRED_SRC.replace("__DIAG__", ""), "diag_credentials.py", "exec"), ns)
+    assert not ns["_diag_url_ok"]("https://enigma.example.test/api/v1/diag/events") and not ns["_diag_url_ok"]("")
 
 
 def test_redirects_are_never_followed_so_the_authorization_header_never_leaves(nb, monkeypatch):

@@ -1,7 +1,7 @@
-import type { SdkError } from "./neon-auth.ts";
+import type { SdkError } from "./auth-server.ts";
 
 /**
- * Maps Neon Managed Better Auth errors to Enigma's public responses. Observed codes (probed against the live service): INVALID_EMAIL_OR_PASSWORD,
+ * Maps Better Auth errors to Enigma's public responses. Codes observed from Better Auth 1.7 (identical under Neon's managed service): INVALID_EMAIL_OR_PASSWORD,
  * INVALID_ORIGIN, INVALID_OTP, PASSWORD_TOO_SHORT; documented: EMAIL_NOT_VERIFIED, USER_ALREADY_EXISTS, TOO_MANY_ATTEMPTS.
  * The public message never reveals whether an account exists and never echoes upstream text. Infrastructure problems (a wrong origin, an outage, a
  * network error) are NOT reported as bad credentials: they are `upstream` outcomes that the route logs by code only (no e-mail, password or code).

@@ -21,3 +21,13 @@ Current counts and the date of the last run are recorded in `docs/ENIGMA_FINAL_R
 - `tests/connector/test_sdk_integration.py`: needs the Stokastisk SDK source (`ENIGMA_SDK_SRC`).
 
 Mock data is always labelled Synthetic; mock runs and mock telemetry are never counted as real GPU evidence.
+
+## 2026-11-27 — OCI migration branch (local evidence; no deployment, no Kaggle GPU run)
+| Suite | Result |
+|---|---|
+| `python3.13 -m pytest -q` (API, SQL on local PostgreSQL 18, connector, notebooks) | 778 passed, 5 skipped (GPU-only / evidence-dir-only) |
+| `apps/web`: `npm run test:unit`, `npx next build` | 43/43, build OK (Next.js 16.4.6) |
+| `scripts/local_auth_e2e.py` (PostgreSQL 17, SMTP sink, next start, uvicorn) | 24/24 (sign-up/code/sign-in, two tenants, CSRF, sign-out, role separation) |
+| `scripts/oci_import.py --dry-run` on the real Neon backup (PostgreSQL 18.7) | 20/20 checks; schema identical to a fresh bootstrap |
+| `deploy/oci` compose smoke on x86 (local CA, not public TLS) | edge routing, private routes 404, sign-up closed, diag ingest on PostgreSQL, restart persistence, restore drill |
+Not run: ARM64 build (A1 capacity), public TLS, live OCI acceptance, Kaggle notebooks 01-03 on GPU.

@@ -1,18 +1,18 @@
 # Architecture
 
 ```
-Browser ──Cognito session cookies──> Next.js (Railway)
-   │  /api/enigma/*  = BFF: verifies session, allow-lists method+path, zod-validates bodies, adds bearer
-   │  Realtime (optional) <── private channel conv:<id> (RLS on realtime.messages)
+Browser ──httpOnly Better Auth session cookie──> Caddy (TLS) ──> Next.js
+   │  /api/enigma/*  = BFF: verifies the session, mints a 15-min EdDSA token, allow-lists method+path, zod-validates bodies
    v
-FastAPI (Railway container, user plane /api/v1/app/*, runtime plane /api/v1/*)
-   │  private network, least-privilege database role, TLS
+FastAPI (private network; tenant routes are not public; runtime plane /api/v1/{runtimes,telemetry,jobs,diag} via Caddy)
+   │  private network, least-privilege database role, TLS 1.3 with hostname verification
    v
-Railway PostgreSQL  (jobs, events, messages, telemetry; atomic SQL functions)
+PostgreSQL 18  (jobs, events, messages, telemetry, auth schema; atomic SQL functions)
    ^
-   │  outbound HTTPS: claim / events / complete / telemetry / heartbeat
+   │  outbound HTTPS: claim / events / complete / telemetry / heartbeat / diagnostic markers
 GPU host (Kaggle notebook): enigma_connector ── localhost ──> stokastisk ServerProcess (vLLM) + NVML
 ```
+Deployment target: one OCI Always Free A1 VM (`deploy/oci/`). The web tier's auth role can read only the `auth` schema; the API role cannot read it.
 
 ## Data plane vs control plane
 The GPU host runs vLLM on `127.0.0.1` and polls Enigma. Nothing is exposed, tunnelled or SSE-streamed from Kaggle. Every API request terminates quickly; durable state (jobs, leases, events) lives in Postgres, so no function needs to stay alive.

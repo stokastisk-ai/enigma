@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import * as c from "./neon-errors.ts";
+import * as c from "./auth-errors.ts";
 
 const e = (status: number, code = "", message = "") => ({ status, code, message });
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Enigma backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/enigma/src/deploy/oci/enigma-backup.sh
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle

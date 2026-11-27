@@ -253,7 +253,7 @@ def test_malformed_region_or_pool_id_is_refused_at_startup():
 def test_default_fetcher_refuses_non_https_urls():
     with pytest.raises(OSError):
         from enigma_api.security import JwksCache
-        JwksCache._default_fetch("http://cognito-idp.us-east-1.amazonaws.com/x/.well-known/jwks.json")
+        JwksCache("http://cognito-idp.us-east-1.amazonaws.com/x/.well-known/jwks.json")._default_fetch("http://cognito-idp.us-east-1.amazonaws.com/x/.well-known/jwks.json")
 
 
 # ---- JWT header / claim attacks (the verifier must trust ONLY its own cached/pinned keys and the pool issuer)

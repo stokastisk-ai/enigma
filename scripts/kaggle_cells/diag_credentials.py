@@ -1,10 +1,10 @@
-# C1. Application credentials (Kaggle Secrets) and the independent AWS diagnostic transport. Shared by notebooks 01, 02 and 03 (generated from
-# scripts/kaggle_cells/diag_credentials.py; CPU tests exercise this exact text). Standard library only: no boto3, no AWS CLI, no AWS credential.
+# C1. Application credentials (Kaggle Secrets) and the diagnostic transport to the OCI deployment. Shared by notebooks 01, 02 and 03 (generated from
+# scripts/kaggle_cells/diag_credentials.py; CPU tests exercise this exact text). Standard library only: no cloud SDK, no cloud-provider credential.
 #
 # Two DIFFERENT application credentials, never interchangeable:
-#   ENIGMA_DIAG_KEY       edx_<8>_<43>      56 chars  authenticates ONLY the independent AWS diagnostic Lambda (notebooks 01, 02 aws-assisted, 03)
+#   ENIGMA_DIAG_KEY       edx_<8>_<43>      56 chars  authenticates ONLY POST /api/v1/diag/events (notebooks 01, 02 oci-assisted, 03)
 #   ENIGMA_RUNTIME_TOKEN  enig_rt_<8>_<43>  60 chars  authenticates ONLY Enigma runtime registration / heartbeats / telemetry / jobs (notebook 03)
-# Neither is an AWS IAM key. Values are never printed, stored in os.environ, written to evidence, or sent anywhere but their own endpoint; only a
+# Neither is a cloud-provider key. Values are never printed, stored in os.environ, written to evidence, or sent anywhere but their own endpoint; only a
 # category, a code and lengths are ever recorded. Only a VALIDATED value is cached; a failed lookup never poisons the cache. After fixing a secret in
 # Kaggle's sidebar (Add-ons -> Secrets), call refresh_credentials() (or just re-run the preflight cell): the attempt id, the event sequence, completed
 # verdicts and evidence files are all kept. Note: reading a Kaggle Secret is itself a request to Kaggle's own backend (kaggle_secrets talks to the
@@ -121,10 +121,10 @@ def check_credential(name, step):
     verdict(step, "INCONCLUSIVE", f"{name}: {res['code']}", **ev)
 
 
-# ------------------------------------------------------------------------------------------------------------- transport to the diagnostic Lambda
+# ------------------------------------------------------------------------------------------------------------- transport to the OCI diagnostic route
 DIAG_GUIDANCE = {
-    "DIAGNOSTIC_PERSISTENCE_VERIFIED": "AWS acknowledged a durable write (stored or already stored)",
-    "DIAGNOSTIC_AUTH_REJECTED": "the diagnostic Lambda rejected ENIGMA_DIAG_KEY: re-check the Kaggle Secret against the local ENIGMA_DIAG_KEY.txt; do not retry blindly",
+    "DIAGNOSTIC_PERSISTENCE_VERIFIED": "the OCI deployment acknowledged a durable write (stored or already stored)",
+    "DIAGNOSTIC_AUTH_REJECTED": "the diagnostic route rejected ENIGMA_DIAG_KEY: re-check the Kaggle Secret against the key issued by scripts/diag_keys.py; do not retry blindly",
     "DIAGNOSTIC_KEY_EXPIRED_OR_REVOKED": "ENIGMA_DIAG_KEY is correct but expired or revoked: ask for a newly issued diagnostic key",
     "DIAGNOSTIC_QUOTA_EXCEEDED": "this diagnostic key used its whole event quota: ask for a newly issued diagnostic key",
     "DIAGNOSTIC_NETWORK_TIMEOUT": "the diagnostic endpoint did not answer in time",
@@ -147,7 +147,7 @@ _REMOTE_FIELDS = {"stage", "phase", "http", "latency_s", "target", "exc", "exit_
 
 
 class DiagResult(dict):
-    """Truthy only when AWS durably acknowledged every event."""
+    """Truthy only when the OCI deployment durably acknowledged every event."""
     def __bool__(self):
         return self.get("code") == "DIAGNOSTIC_PERSISTENCE_VERIFIED"
 
@@ -167,7 +167,10 @@ _OPENER = _build_opener()
 
 def _diag_url_ok(url):
     u = urllib.parse.urlsplit(url)
-    return u.scheme == "https" and (u.hostname or "").endswith(".lambda-url.us-east-1.on.aws") and not u.username and not u.password
+    d = urllib.parse.urlsplit(DIAG_URL)
+    # Exactly the generator-configured OCI host, https, the one diagnostic path; never another host (the Authorization header goes nowhere else).
+    return bool(DIAG_URL) and u.scheme == "https" and bool(u.hostname) and u.hostname == d.hostname and u.port == d.port \
+        and u.path == "/api/v1/diag/events" and not (u.username or u.password or u.query or u.fragment)
 
 
 def _net_code(exc):
@@ -183,8 +186,8 @@ def _net_code(exc):
     return "DIAGNOSTIC_CONNECTION_ERROR", "unknown"
 
 
-def post_events(events, key, url=None, timeout=15.0, max_attempts=3, backoff=1.0):   # timeout > the Lambda's own 10 s limit
-    """POST {"events": [...]} once per attempt. Retries ONLY transient failures, with the SAME body (same attempt id and seq): the Lambda's
+def post_events(events, key, url=None, timeout=15.0, max_attempts=3, backoff=1.0):   # bounded; the server answers only after the insert committed
+    """POST {"events": [...]} once per attempt. Retries ONLY transient failures, with the SAME body (same attempt id and seq): the server's
     conditional write makes a resubmission a duplicate, never a second record. Never retries an authentication or validation answer."""
     url = url or DIAG_URL
     body = json.dumps({"events": events}).encode()
@@ -258,7 +261,7 @@ def _event(name, rec, fields, seq):
 
 
 def rmark(name, **fields):
-    """mark() locally, then (if remote diagnostics are enabled) one bounded event to AWS. Returns a DiagResult: truthy only after AWS
+    """mark() locally, then (if remote diagnostics are enabled) one bounded event to the OCI diagnostic route. Returns a DiagResult: truthy only after it
     acknowledged the durable write. A 401 forgets the cached key (fix the secret, then re-run). Nothing secret is ever recorded."""
     rec = mark(name, **fields)
     if not REMOTE_ENABLED:

@@ -1,0 +1,11 @@
+[Unit]
+Description=Enigma prune
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/enigma/src/deploy/oci/enigma-prune.sh
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle

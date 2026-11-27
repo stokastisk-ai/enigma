@@ -1,6 +1,6 @@
 /**
  * Small fixed-window limiter for the auth endpoints. IN-PROCESS and per instance (Railway runs one web instance that sleeps when idle), so it is a
- * brute-force speed bump, not a distributed guarantee: Neon Auth applies its own limits upstream and the API rate-limits every call after sign-in.
+ * brute-force speed bump, not a distributed guarantee: Better Auth's own limiter is disabled (these routes are the only entry point) and the API rate-limits every call after sign-in.
  * Keys are hashed by the caller; the map is bounded and expired windows are swept so memory cannot grow without limit.
  */
 const MAX_KEYS = 5000;

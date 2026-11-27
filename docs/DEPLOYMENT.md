@@ -1,31 +1,39 @@
-# Deployment (Railway)
+# Deployment (OCI Always Free)
 
-Enigma runs as three services in one Railway project/environment: `Enigma` (Next.js web), `enigma-api` (FastAPI) and `Postgres`. Both application services are built from this repository's `main` branch with the **repository root as the Docker build context** (the web app imports `packages/contracts`), use Railway Serverless, run one replica, and run as a non-root user.
+Status: implemented on branch `migration/oci-always-free`, verified locally (x86 compose smoke, real-data import dry run); **not yet deployed**
+(Ampere A1 capacity pending). The previous Railway + Neon deployment stays live until the owner approves the cutover.
 
-| | web | api |
+## Resources (all Always Free, home region)
+One `VM.Standard.A1.Flex` (2 OCPU / 12 GB, Ubuntu 24.04 aarch64, 50 GB boot) in a dedicated compartment guarded by a quota policy that allows only
+that shape and size and at most 100 GB of block storage. One VCN/public subnet; security list: 443 and 80 public, 22 from the operator address only.
+No load balancer, managed database, Functions or API Gateway. Optional private Object Storage bucket for encrypted backups (write-only PAR upload).
+
+## Stack (`deploy/oci/compose.yaml`)
+| Service | Exposure | Notes |
 |---|---|---|
-| Dockerfile | `apps/web/Dockerfile` | `apps/api/Dockerfile` |
-| Port | `PORT=3000` | `PORT=8000` |
-| Health check | `/` | `/api/v1/health` (liveness) |
-| Readiness | – | `GET /api/v1/admin/ready` with `Authorization: Bearer $CRON_SECRET` (checks the database) |
-| Watch paths | `apps/web/**`, `packages/contracts/**` | `apps/api/**`, `infra/aws/sql/**` |
-| Pre-deploy | – | `python -m enigma_api.bootstrap` (applies the portable schema and creates the least-privilege database role when `ENIGMA_DB_ADMIN_DSN` is set; a no-op otherwise) |
+| caddy | 80/443 | automatic Let's Encrypt for `ENIGMA_HOST`, which can be the VM's public IPv4 address (free IP certificate, `shortlived` 160 h profile, renewed automatically; no domain needed); port 80 = ACME + redirect; HSTS; only web + the API runtime plane routed |
+| web | private | Next.js standalone, self-hosted Better Auth (schema `auth`), BFF to `http://api:8000` |
+| api | private (runtime plane via caddy) | FastAPI, `ENIGMA_AUTH_PROVIDER=betterauth`, JWKS from `http://web:3000/api/auth/jwks` |
+| db | internal network, no egress | PostgreSQL 18.7, TLS 1.3 from a local CA (`db-tls.sh`); clients use `sslmode=verify-full` |
+| migrate / ops | on demand (profile `ops`) | schema + least-privilege roles; import and key tooling |
 
-Do not use `railway.toml` (Railway deprecated config-as-code) or `railway up .` from the repository root: use `scripts/railway_stage_upload.py` + `scripts/railway_enigma_deploy.py` for an exact upload, or let the GitHub-connected services build `main`.
+Images are built natively on the ARM VM; PostgreSQL and Caddy images are pinned by digest. Containers run non-root where the image allows,
+read-only root filesystems for api/web, memory limits, `no-new-privileges`, bounded `local` log driver, restart `unless-stopped`.
 
-## Variables (names only; values live in Railway, never in Git)
-- **web:** `PORT`, `ENIGMA_AUTH_PROVIDER=cognito`, `NEXT_PUBLIC_COGNITO_REGION`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`, `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `ENIGMA_PUBLIC_ORIGIN`, `ENIGMA_PUBLIC_HOST`, `ENIGMA_API_URL` (private `http://<api>.railway.internal:<port>`).
-- **api:** `PORT`, `ENIGMA_STORE=postgres`, `ENIGMA_DB_DSN` (least-privilege role, `sslmode=require`), `ENIGMA_DB_APP_PASSWORD`, `ENIGMA_AUTH_PROVIDER=cognito`, `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`, `CRON_SECRET`, `ENIGMA_AWS_OPS=off`. `ENIGMA_DB_ADMIN_DSN` exists only during the first bootstrap and is then deleted.
-- Never set `ENIGMA_DEV_AUTH` in production: both tiers refuse it on Railway.
+## First deployment
+1. `deploy/oci/db-tls.sh`; create `/opt/enigma/secrets/{compose,db,migrate,api,web}.env` (mode 0600) from the `*.env.example` templates.
+2. `docker compose --env-file /opt/enigma/secrets/compose.env build`, then `up -d db`.
+3. Import existing data (optional): `--profile ops run --rm ops python3 /work/oci_import.py ... --dry-run`, then without `--dry-run`.
+4. `--profile ops run --rm migrate` (idempotent: migrations 0001-0006, roles `enigma_api` and `enigma_web_auth`).
+5. `up -d`; install `deploy/oci/systemd/*` and enable `enigma.service`, `enigma-backup.timer`, `enigma-prune.timer`, `enigma-certcheck.timer`.
 
-## Authentication
-Amazon Cognito user pool with one public app client (no secret; `USER_PASSWORD_AUTH` + refresh tokens; email as username; email confirmation code; no hosted UI, so no callback URLs). The BFF holds tokens in `HttpOnly; Secure; SameSite=Lax` cookies (access: `Path=/`, refresh: `Path=/api`) and the API independently verifies the access token (issuer, signature via the pool JWKS, `token_use=access`, client binding) and enforces tenant membership.
+## Operations
+Status `docker compose ps`; logs `docker compose logs --tail 200 <service>`; restart `docker compose restart <service>`; nightly encrypted backup
+(`enigma-backup.sh`, age-encrypted to an operator key that is not on the VM, uploaded as the VM's instance principal); daily retention
+(`enigma-prune.sh`; an optional `ENIGMA_RETENTION_HOLD_UNTIL` of at most 7 days keeps finished-job events during a migration); TLS monitor every
+6 h (`enigma-certcheck.sh`: chain + name + at least 72 h left, alert through OCI Notifications). Sign-up is closed
+(`ENIGMA_PUBLIC_SIGNUP=off`, private beta) until a trusted mail sender on an owner-controlled domain is configured.
 
-## Kaggle connector
-Set `ENIGMA_API_URL` to the API's public HTTPS origin and `ENIGMA_RUNTIME_TOKEN` (minted once in the UI, stored in a Kaggle secret). The connector polls outbound only; while it runs it keeps the API awake, and when it stops the runtime turns offline after its heartbeat expires and the API can sleep.
-
-## Retention
-`.github/workflows/retention.yml` calls `GET /api/v1/admin/prune` daily. It needs the repository secret `ENIGMA_CRON_SECRET` and the repository variable `ENIGMA_API_URL`.
-
-## Cost
-Railway Hobby ($5/month, including $5 of usage; not a spending cap). Set a workspace usage limit (soft $5, minimum hard $10) and check `railway usage` after changes. Postgres is the only always-on service.
+## GPU host
+Kaggle notebooks 01/02/03 in `docs/kaggle/diagnostics/` connect outbound over HTTPS; nothing is exposed from Kaggle. Kaggle Secrets:
+`ENIGMA_DIAG_KEY`, `ENIGMA_RUNTIME_TOKEN`.
