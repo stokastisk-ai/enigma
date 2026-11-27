@@ -24,6 +24,11 @@ from psycopg import sql
 
 ROLE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 SCHEMA_FILE, FUNCTIONS_FILE = "0001_core_schema.sql", "0002_job_functions.sql"
+ENSURE_GROUP_ROLE = """do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'enigma_app') then
+    create role enigma_app nologin nosuperuser nocreatedb nocreaterole nobypassrls;
+  end if;
+end $$;"""
 
 
 def say(msg: str) -> None:
@@ -56,6 +61,8 @@ def run(env: dict[str, str] | None = None) -> int:
             else:
                 c.execute(files[SCHEMA_FILE].read_text())
                 say("applied 0001_core_schema.sql")
+            # The group role must exist before 0002 grants EXECUTE to it (a schema restored from a dump does not carry roles).
+            c.execute(ENSURE_GROUP_ROLE)
             c.execute(files[FUNCTIONS_FILE].read_text())              # create or replace: safe to repeat
             say("applied 0002_job_functions.sql")
             for extra in sorted(p for p in sql_dir.glob("*.sql") if p.name not in (SCHEMA_FILE, FUNCTIONS_FILE)):
