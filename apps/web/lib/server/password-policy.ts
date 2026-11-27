@@ -1,7 +1,7 @@
 /**
- * Sign-up password policy (server side, enforced by the BFF before anything reaches Neon). Length first (NIST SP 800-63B style) plus the cheap
+ * Sign-up password policy (server side, enforced by the BFF before anything reaches Better Auth). Length first (NIST SP 800-63B style) plus the cheap
  * checks that catch the worst choices: no composition rules that push users towards "Password1!".
- * Neon's own endpoint enforces only its default minimum, so this is a BFF-level policy, not a service-wide one.
+ * Better Auth itself enforces only the 12..128 length bounds configured in auth-instance.ts; this BFF-level policy adds the rest.
  */
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;

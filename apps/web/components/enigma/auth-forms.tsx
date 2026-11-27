@@ -14,7 +14,7 @@ const RESEND_COOLDOWN_S = 60;
 
 async function post(action: string, body: Record<string, string>): Promise<Reply> {
   try {
-    const r = await fetch(`/api/auth/neon/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`/api/auth/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     return { ok: r.ok, status: r.status, code: j?.error?.code, message: j?.error?.message, needsVerify: Boolean(j?.needsVerify), signedIn: Boolean(j?.signedIn) };
   } catch {
@@ -23,11 +23,11 @@ async function post(action: string, body: Record<string, string>): Promise<Reply
 }
 
 /**
- * Email + password forms for Neon Managed Better Auth (beta), with the e-mail verification code step.
- * Neon e-mails a 6-digit code (valid 15 minutes). Sessions are httpOnly cookies set by the server; this component never sees a token.
+ * Email + password forms for Enigma's self-hosted Better Auth, with the e-mail verification code step.
+ * The server e-mails a 6-digit code (valid 10 minutes). Sessions are httpOnly cookies set by the server; this component never sees a token.
  * Messages are deliberately the same for new and existing addresses (no account enumeration).
  */
-export function NeonAuth({ mode, notice: initialNotice }: { mode: Mode; notice?: string }) {
+export function AuthForms({ mode, notice: initialNotice }: { mode: Mode; notice?: string }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("form");
   const [email, setEmail] = useState("");
@@ -122,7 +122,7 @@ export function NeonAuth({ mode, notice: initialNotice }: { mode: Mode; notice?:
 
   return (
     <main className="grid flex-1 place-items-center p-6">
-      <form onSubmit={step === "verify" ? submitCode : submitForm} className="flex w-full max-w-sm flex-col gap-4 rounded-xl border bg-card p-6" data-testid={step === "verify" ? "neon-verify-form" : "neon-form"}>
+      <form onSubmit={step === "verify" ? submitCode : submitForm} className="flex w-full max-w-sm flex-col gap-4 rounded-xl border bg-card p-6" data-testid={step === "verify" ? "auth-verify-form" : "auth-form"}>
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold">{heading}</h1>
           <p className="text-xs text-muted-foreground" data-testid="auth-provider-label">New Enigma account (beta). Verification codes are sent by email.</p>
@@ -169,12 +169,12 @@ export function NeonAuth({ mode, notice: initialNotice }: { mode: Mode; notice?:
   );
 }
 
-export function NeonSignOut() {
+export function AuthSignOut() {
   const router = useRouter();
   return (
     <div className="px-2">
       <Button variant="ghost" size="sm" data-testid="sign-out" onClick={async () => {
-        await fetch("/api/auth/neon/sign-out", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => {});
+        await fetch("/api/auth/sign-out", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => {});
         router.replace("/");
         router.refresh();
       }}>Sign out</Button>

@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     neon_auth_base_url: str = Field(default="", validation_alias="NEON_AUTH_BASE_URL")
     neon_auth_jwks_url: str = Field(default="", validation_alias="NEON_AUTH_JWKS_URL")          # optional override; default <base>/.well-known/jwks.json
     neon_require_verified_email: bool = True                                                        # env ENIGMA_NEON_REQUIRE_VERIFIED_EMAIL
+    # Self-hosted Better Auth (the OCI deployment's user plane, ENIGMA_AUTH_PROVIDER=betterauth). ENIGMA_AUTH_ISSUER is the public https origin of
+    # the web app (token `iss` and `aud`). ENIGMA_AUTH_JWKS_URL is where the API fetches the public keys: https on the issuer origin, or plain http to a
+    # single-label host on the private container network (e.g. http://web:3000/api/auth/jwks), which never leaves the VM.
+    auth_issuer: str = ""                                                                            # env ENIGMA_AUTH_ISSUER
+    auth_jwks_url: str = ""                                                                          # env ENIGMA_AUTH_JWKS_URL
+    auth_require_verified_email: bool = True                                                         # env ENIGMA_AUTH_REQUIRE_VERIFIED_EMAIL
     # dev-only auth (HS256 tokens minted by the local BFF/tests). Refused in production and on Railway.
     dev_auth: bool = False
     dev_jwt_secret: str = ""
@@ -54,6 +60,33 @@ class Settings(BaseSettings):
         from urllib.parse import urlparse
         u = urlparse(self.neon_auth_base_url)
         return f"https://{u.netloc}" if u.scheme == "https" and u.netloc else ""
+
+    @property
+    def auth_origin(self) -> str:
+        """Self-hosted Better Auth issuer: the https ORIGIN of ENIGMA_AUTH_ISSUER (no path, query or credentials), else empty."""
+        from urllib.parse import urlparse
+        u = urlparse(self.auth_issuer.rstrip("/"))
+        clean = u.hostname and not (u.username or u.password or u.query or u.fragment or u.path not in ("", "/"))
+        if clean and u.scheme == "https":
+            return f"https://{u.netloc}"
+        # Local end-to-end tests only: plain http on loopback, never in production (is_production also covers any hosted platform).
+        if clean and u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost") and self.env in ("development", "test") and not self.is_production:
+            return f"http://{u.netloc}"
+        return ""
+
+    @property
+    def auth_jwks_ok(self) -> bool:
+        """JWKS URL is either on the issuer origin over https, or plain http to a private single-label container host (no dots: never a public name)."""
+        import re as _re
+        from urllib.parse import urlparse
+        u = urlparse(self.auth_jwks_url)
+        if u.username or u.password or u.query or u.fragment or not u.path.startswith("/"):
+            return False
+        if u.scheme == "https":
+            return bool(self.auth_origin) and f"https://{u.netloc}" == self.auth_origin
+        if u.scheme == "http" and self.auth_origin == f"http://{u.netloc}":
+            return True                                                       # loopback test issuer serving its own JWKS
+        return u.scheme == "http" and bool(_re.fullmatch(r"[a-z][a-z0-9-]{0,62}", u.hostname or ""))
 
     @property
     def neon_jwks_url(self) -> str:
@@ -102,8 +135,13 @@ class Settings(BaseSettings):
         """Return a list of fatal configuration problems. Called at app creation; production refuses to boot with any."""
         problems: list[str] = []
         prod = self.is_production
-        if self.auth_provider not in ("neon", "cognito"):
-            problems.append("ENIGMA_AUTH_PROVIDER must be 'cognito' or 'neon'")
+        if self.auth_provider not in ("neon", "cognito", "betterauth"):
+            problems.append("ENIGMA_AUTH_PROVIDER must be 'betterauth', 'cognito' or 'neon'")
+        if self.auth_provider == "betterauth" and (self.auth_issuer or self.auth_jwks_url):
+            if not self.auth_origin:
+                problems.append("ENIGMA_AUTH_ISSUER must be an https origin (it pins the token issuer and audience)")
+            elif not self.auth_jwks_ok:
+                problems.append("ENIGMA_AUTH_JWKS_URL must be https on the issuer origin or http to a private single-label container host")
         if self.cognito_token_use not in ("access", "id"):
             problems.append("COGNITO_TOKEN_USE must be 'access' or 'id'")
         if (self.cognito_region or self.cognito_user_pool_id) and not self.cognito_issuer:
@@ -127,7 +165,12 @@ class Settings(BaseSettings):
                     problems.append("ENIGMA_DB_DSN is required when ENIGMA_STORE=postgres")
                 elif any(f"sslmode={m}" in self.db_dsn for m in ("disable", "allow", "prefer", "require")):
                     problems.append("ENIGMA_DB_DSN must use sslmode=verify-full in production (certificate and host name are verified)")
-            if self.auth_provider == "cognito":
+            if self.auth_provider == "betterauth":
+                if not (self.auth_origin and self.auth_jwks_ok):
+                    problems.append("ENIGMA_AUTH_ISSUER (https) and ENIGMA_AUTH_JWKS_URL are required in production")
+                if not self.auth_require_verified_email:
+                    problems.append("ENIGMA_AUTH_REQUIRE_VERIFIED_EMAIL must be true in production")
+            elif self.auth_provider == "cognito":
                 if not (self.cognito_issuer and self.cognito_app_client_id):
                     problems.append("COGNITO_REGION, COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID are required when ENIGMA_AUTH_PROVIDER=cognito")
             else:

@@ -16,7 +16,7 @@ test("a lookup failure is not treated as a session (it propagates, so the page c
 });
 
 test("a verified session is returned unchanged and deny() is not called", async () => {
-  const s = { userId: "u1", token: "t", mode: "neon" as const };
+  const s = { userId: "u1", token: "t", mode: "betterauth" as const };
   let denied = false;
   const got = await requireSessionOr(async () => s, () => { denied = true; return deny(); });
   assert.equal(got, s);

@@ -89,7 +89,7 @@ def verify_runtime_token(store: Any, token: str, now: datetime | None = None) ->
 @dataclass(frozen=True)
 class UserIdentity:
     user_id: str          # namespaced subject: Cognito `cognito:<sub>`, Neon `neon:<sub>`; dev tokens use their own `sub`
-    auth: str             # "cognito" | "neon" | "dev"
+    auth: str             # "betterauth" | "cognito" | "neon" | "dev"
 
 
 KeyResolver = Callable[[str], Any]   # token -> signing key (injectable for tests)
@@ -118,8 +118,9 @@ class JwksCache:
     """
 
     def __init__(self, url: str, fetch: Callable[[str], dict] | None = None, clock: Callable[[], float] | None = None,
-                 min_refresh_s: float = 300.0, ttl_s: float = 3600.0):
+                 min_refresh_s: float = 300.0, ttl_s: float = 3600.0, allow_private_http: bool = False):
         import time as _t
+        self.allow_private_http = allow_private_http
         self.url, self._fetch, self._clock = url, fetch or self._default_fetch, clock or _t.monotonic
         self.min_refresh_s, self.ttl_s = min_refresh_s, ttl_s
         self._keys: dict[str, Any] = {}
@@ -127,13 +128,16 @@ class JwksCache:
         self._last_success: float | None = None
         self.fetches = 0                                                  # observable for tests / diagnostics
 
-    @staticmethod
-    def _default_fetch(url: str) -> dict:
+    def _default_fetch(self, url: str) -> dict:
         import json
         import urllib.request
-        if not url.startswith("https://"):
-            raise OSError("JWKS URL must be https")
-        with urllib.request.urlopen(url, timeout=2.0) as r:               # noqa: S310  (https enforced above; URL built from validated settings)
+        from urllib.parse import urlparse
+        u = urlparse(url)
+        private_http = self.allow_private_http and u.scheme == "http" and bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", u.hostname or ""))
+        if u.scheme != "https" and not private_http:
+            raise OSError("JWKS URL must be https (or http to a private single-label container host when explicitly allowed)")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # never route key fetches through an ambient proxy
+        with opener.open(url, timeout=2.0) as r:                          # noqa: S310  (scheme/host validated above; URL from validated settings)
             return json.loads(r.read(262144))
 
     def _load(self, doc: dict) -> dict[str, Any]:
@@ -169,6 +173,7 @@ class UserVerifier:
         self._resolver = key_resolver
         self._jwks_fetch, self._clock = jwks_fetch, clock
         self._neon_keys: JwksCache | None = None
+        self._ba_keys: JwksCache | None = None
         self._cognito_keys: JwksCache | None = None
 
     def _verify_cognito(self, token: str) -> "UserIdentity":
@@ -217,6 +222,29 @@ class UserVerifier:
             raise unauthorized
         return UserIdentity(f"neon:{_valid_subject(claims['sub'])}", "neon")
 
+    def _verify_betterauth(self, token: str) -> "UserIdentity":
+        """Self-hosted Better Auth JWT (jwt plugin): EdDSA (Ed25519), 15-minute expiry, `iss` AND `aud` equal to ENIGMA_AUTH_ISSUER's origin. Same
+        rules as the Neon verifier (banned refused, verified e-mail required by default). The `sub` is the Better Auth user UUID, namespaced `ba:<sub>`;
+        users migrated from Neon keep their UUID and are re-keyed `neon:<uuid>` -> `ba:<uuid>` by scripts/oci_import.py (no e-mail based linking)."""
+        unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
+        s = self.s
+        origin = s.auth_origin
+        if not origin or not s.auth_jwks_ok:
+            raise unauthorized
+        if self._resolver:
+            key = self._resolver(token)
+        else:
+            if self._ba_keys is None:
+                self._ba_keys = JwksCache(s.auth_jwks_url, self._jwks_fetch, self._clock, allow_private_http=True)
+            key = self._ba_keys.key_for(jwt.get_unverified_header(token).get("kid"))
+        claims = jwt.decode(token, key, algorithms=["EdDSA"], issuer=origin, audience=origin,
+                            options={"require": ["exp", "iat", "sub", "iss", "aud"]})
+        if claims.get("banned") is True:
+            raise unauthorized
+        if s.auth_require_verified_email and claims.get("emailVerified") is not True:
+            raise unauthorized
+        return UserIdentity(f"ba:{_valid_subject(claims['sub'])}", "betterauth")
+
     def verify(self, token: str) -> UserIdentity:
         unauthorized = ApiError(401, "unauthorized", "authentication required", headers={"www-authenticate": "Bearer"})
         if not token:
@@ -236,6 +264,8 @@ class UserVerifier:
                 return self._verify_cognito(token)
             if alg == "EdDSA" and self.s.auth_provider == "neon":
                 return self._verify_neon(token)
+            if alg == "EdDSA" and self.s.auth_provider == "betterauth":
+                return self._verify_betterauth(token)
             raise unauthorized
         except ApiError:
             raise

@@ -1,9 +1,9 @@
 import { createHmac } from "node:crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { devAuthAllowed } from "./env";
-import { neonAuthEnabled, neonSession } from "./neon-auth";
+import { authEnabled, authSession } from "./auth-server";
 
-export type Session = { userId: string; token: string; mode: "neon" | "dev" };
+export type Session = { userId: string; token: string; mode: "betterauth" | "dev" };
 
 const b64 = (o: unknown) => Buffer.from(typeof o === "string" ? o : JSON.stringify(o)).toString("base64url");
 
@@ -15,16 +15,16 @@ export function mintDevToken(sub: string, secret: string): string {
   return `${head}.${body}.${sig}`;
 }
 
-/** Neon Managed Better Auth session -> Enigma session. The identity is namespaced `neon:<id>` (same value the API derives from the token's `sub`). */
-async function neonCookieSession(): Promise<Session | null> {
-  if (!neonAuthEnabled()) return null;
+/** Self-hosted Better Auth session -> Enigma session. The identity is namespaced `ba:<id>` (same value the API derives from the token's `sub`). */
+async function authCookieSession(): Promise<Session | null> {
+  if (!authEnabled()) return null;
   const jar = await cookies();
-  const r = await neonSession(jar.getAll().map((c) => c.name), (n) => jar.get(n)?.value);
-  return r ? { userId: `neon:${r.user.id}`, token: r.token, mode: "neon" } : null;
+  const r = await authSession(await headers(), jar.getAll().map((c) => c.name), (n) => jar.get(n)?.value);
+  return r ? { userId: `ba:${r.user.id}`, token: r.token, mode: "betterauth" } : null;
 }
 
 export async function getSession(): Promise<Session | null> {
-  const n = await neonCookieSession();
+  const n = await authCookieSession();
   if (n) return n;
   if (devAuthAllowed()) {
     // optional dev identity switch so E2E can prove tenant isolation with two users

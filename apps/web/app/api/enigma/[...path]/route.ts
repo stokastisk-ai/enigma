@@ -8,7 +8,7 @@ import { ConversationCreate, ProjectCreate, RuntimeCreate, SubmitJob, WorkspaceC
 
 /**
  * Authenticated BFF. The browser never talks to FastAPI directly and never sees a bearer token:
- * this route verifies the session (Neon Auth or the guarded dev login), then forwards ONLY allow-listed method+path combinations with a validated body.
+ * this route verifies the session (self-hosted Better Auth or the guarded dev login), then forwards ONLY allow-listed method+path combinations with a validated body.
  * Anything not listed is a 404, so the proxy cannot be used to reach other upstream paths (no SSRF / path traversal).
  */
 const ID = "[0-9a-fA-F-]{36}";

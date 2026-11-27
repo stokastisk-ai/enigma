@@ -6,6 +6,7 @@ Needs an ADMIN connection, so it only acts when ``ENIGMA_DB_ADMIN_DSN`` is set; 
     ENIGMA_DB_ADMIN_DSN    libpq DSN of a role allowed to create tables/roles (secret; never printed or logged)
     ENIGMA_DB_APP_PASSWORD password for the application role (secret; never printed or logged)
     ENIGMA_DB_APP_ROLE     application role name (default: enigma_api)
+    ENIGMA_DB_AUTH_PASSWORD  optional: creates the web-tier auth login role (ENIGMA_DB_AUTH_ROLE, default enigma_web_auth) in enigma_auth_app only
     ENIGMA_SQL_DIR         directory holding 0001_core_schema.sql and 0002_job_functions.sql (default: ./sql next to the package)
 
 The application role is NOSUPERUSER NOBYPASSRLS and only a member of the enigma_app group role, exactly as tests/api/test_postgres_store.py exercises.
@@ -74,9 +75,43 @@ def run(env: dict[str, str] | None = None) -> int:
                 say("verification FAILED: role is over-privileged or not a member of enigma_app")
                 return 3
             say("verified: least-privilege role, member of enigma_app")
+            rc = _auth_role(c, env)
+            if rc:
+                return rc
     except psycopg.Error as e:
         say(f"database error: {getattr(e, 'sqlstate', None) or type(e).__name__}")
         return 3
+    return 0
+
+
+def _auth_role(c: psycopg.Connection, env: dict[str, str]) -> int:
+    """Optional second login role for the web tier's self-hosted Better Auth (schema `auth`, migration 0004). Created only when
+    ENIGMA_DB_AUTH_PASSWORD is set; it is a member of enigma_auth_app ONLY, so the web tier can never read tenant data and the API can never read
+    password hashes or sessions. ENIGMA_DB_AUTH_ROLE defaults to enigma_web_auth."""
+    password = env.get("ENIGMA_DB_AUTH_PASSWORD", "")
+    if not password:
+        return 0
+    role = env.get("ENIGMA_DB_AUTH_ROLE", "enigma_web_auth")
+    if not ROLE_RE.fullmatch(role) or role in ("postgres", "enigma_app", "enigma_auth_app", env.get("ENIGMA_DB_APP_ROLE", "enigma_api")):
+        say("ENIGMA_DB_AUTH_ROLE is invalid")
+        return 2
+    if len(password) < 24:
+        say("ENIGMA_DB_AUTH_PASSWORD must be at least 24 characters")
+        return 2
+    if not c.execute("select 1 from pg_roles where rolname = 'enigma_auth_app'").fetchone():
+        say("enigma_auth_app missing: 0004_auth_schema.sql was not applied")
+        return 2
+    exists = c.execute("select 1 from pg_roles where rolname = %s", (role,)).fetchone()
+    attrs = "login nobypassrls nocreatedb nocreaterole" if exists else "login nosuperuser nobypassrls nocreatedb nocreaterole"
+    c.execute(sql.SQL(("alter" if exists else "create") + " role {} " + attrs + " password {}").format(sql.Identifier(role), sql.Literal(password)))
+    c.execute(sql.SQL("grant enigma_auth_app to {}").format(sql.Identifier(role)))
+    say(f"auth role {role}: {'password rotated' if exists else 'created'}")
+    row = c.execute("select rolsuper or rolbypassrls or rolcreatedb or rolcreaterole from pg_roles where rolname = %s", (role,)).fetchone()
+    auth_member, app_member = c.execute("select pg_has_role(%s, 'enigma_auth_app', 'member'), pg_has_role(%s, 'enigma_app', 'member')", (role, role)).fetchone()
+    if row[0] or not auth_member or app_member:
+        say("verification FAILED: auth role is over-privileged, not in enigma_auth_app, or also in enigma_app")
+        return 3
+    say("verified: auth role is least-privilege and isolated from tenant data")
     return 0
 
 

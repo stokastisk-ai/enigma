@@ -2,16 +2,17 @@ import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sameOrigin } from "@/lib/server/origin";
-import * as classify from "@/lib/server/neon-errors";
-import { cacheClearAll, getNeonAuth, neonAuthEnabled, neonRequireVerified, type SdkError } from "@/lib/server/neon-auth";
+import * as classify from "@/lib/server/auth-errors";
+import { cacheClearAll, getAuth, authEnabled, requireVerified, toSdkError, type SdkError } from "@/lib/server/auth-server";
+import { mailConfigured } from "@/lib/server/mailer";
 import { passwordProblem } from "@/lib/server/password-policy";
 import { clientIp, hit, reset } from "@/lib/server/rate-limit";
 
 /**
- * Neon Managed Better Auth endpoints (sign-in, sign-up, verify, resend, sign-out, me). 404 unless ENIGMA_NEON_AUTH=on and configured. Same-origin POSTs only (CSRF; the SDK's session cookies are SameSite as a second layer), strict bodies, generic errors (no
- * account enumeration), rate limits per client address and per account, and no token ever reaches the browser: the SDK sets httpOnly cookies.
- * Failures are logged by action + status + error code ONLY (never an e-mail address, password, code or cookie), so a delivery or configuration problem can
- * be told apart from bad input in the Railway logs.
+ * Self-hosted Better Auth endpoints (sign-in, sign-up, verify, resend, sign-out, me). 404 unless ENIGMA_AUTH=on and configured. Same-origin POSTs only
+ * (CSRF; the session cookies are SameSite=Lax httpOnly as a second layer), strict bodies, generic errors (no account enumeration), rate limits per
+ * client address and per account, and no token ever reaches the browser. Failures are logged by action + status + error code ONLY (never an e-mail
+ * address, password, code or cookie).
  */
 const Email = z.string().trim().toLowerCase().email().max(254);
 const BODIES = {
@@ -31,7 +32,7 @@ const h = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 3
 
 /** Operational log line: action, HTTP status and upstream error code only. */
 function logUpstream(action: string, e: SdkError | undefined) {
-  console.warn(`[enigma.neon-auth] action=${action} upstream_status=${e?.status ?? "none"} upstream_code=${String(e?.code ?? "none").replace(/[^A-Za-z0-9_]/g, "").slice(0, 48)}`);
+  console.warn(`[enigma.auth] action=${action} upstream_status=${e?.status ?? "none"} upstream_code=${String(e?.code ?? "none").replace(/[^A-Za-z0-9_]/g, "").slice(0, 48)}`);
 }
 function out(action: string, o: classify.Outcome, error?: SdkError | null) {
   if (o.upstream) logUpstream(action, error ?? undefined);
@@ -41,11 +42,11 @@ function out(action: string, o: classify.Outcome, error?: SdkError | null) {
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
   const { action } = await ctx.params;
-  if (!neonAuthEnabled() || !(action in BODIES)) return fail(404, "not_found", "not found");
+  if (!authEnabled() || !(action in BODIES)) return fail(404, "not_found", "not found");
   if (!sameOrigin(req.headers.get("origin"), req.headers.get("host"), process.env.ENIGMA_PUBLIC_HOST)) return fail(403, "bad_origin", "cross-origin request refused");
   if (Number(req.headers.get("content-length") ?? 0) > 4096) return fail(413, "payload_too_large", "body too large");
 
-  const ip = hit(`neon:ip:${h(clientIp(req.headers))}`, 30, 5 * 60_000);
+  const ip = hit(`auth:ip:${h(clientIp(req.headers))}`, 30, 5 * 60_000);
   if (!ip.allowed) return fail(429, "rate_limited", "Too many attempts. Try again later.", {}, { "retry-after": String(ip.retryAfterS) });
 
   let raw: unknown;
@@ -61,79 +62,94 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   }
   const b = parsed.data as { email: string; password: string; code: string; name?: string };
 
-  const auth = await getNeonAuth();
+  const auth = await getAuth();
   if (!auth) return fail(503, "auth_unavailable", "authentication is not available");
+  const headers = req.headers;
+  // Runs a Better Auth server call and returns its result plus the Set-Cookie headers it produced (copied onto our own response).
+  const call = async <T,>(fn: () => Promise<{ headers: Headers; response: T }>) => {
+    try {
+      const r = await fn();
+      return { data: r.response, error: null as SdkError, cookies: r.headers.getSetCookie?.() ?? [] };
+    } catch (e) {
+      return { data: null, error: toSdkError(e), cookies: [] as string[] };
+    }
+  };
+  const withCookies = (res: NextResponse, cookies: string[]) => {
+    for (const c of cookies) res.headers.append("set-cookie", c);
+    return res;
+  };
 
   // Account-level limits (keyed by the e-mail STRING, so they behave identically whether or not an account exists).
   const acct = h(b.email ?? ""); // sign-out has no e-mail: hashing `undefined` threw a TypeError (500) before the SDK ever ran
   if (action === "sign-in" || action === "verify") {
-    const a = hit(`neon:acct:${action}:${acct}`, action === "verify" ? 6 : 8, 15 * 60_000);
+    const a = hit(`auth:acct:${action}:${acct}`, action === "verify" ? 6 : 8, 15 * 60_000);
     if (!a.allowed) return fail(429, "rate_limited", "Too many attempts. Try again later.", {}, { "retry-after": String(a.retryAfterS) });
   }
   if (action === "resend") {
-    const a = hit(`neon:acct:resend:${acct}`, 1, 60_000);                       // one code per minute per address
+    const a = hit(`auth:acct:resend:${acct}`, 1, 60_000);                       // one code per minute per address
     if (!a.allowed) return fail(429, "resend_too_soon", "Wait a minute before requesting another code.", {}, { "retry-after": String(a.retryAfterS) });
-    const c = hit(`neon:acct:resend-hour:${acct}`, 5, 3_600_000);               // five per hour
+    const c = hit(`auth:acct:resend-hour:${acct}`, 5, 3_600_000);               // five per hour
     if (!c.allowed) return fail(429, "rate_limited", "Too many codes requested. Try again later.", {}, { "retry-after": String(c.retryAfterS) });
   }
 
   try {
     switch (action as Action) {
       case "sign-in": {
-        const { error } = await auth.signIn.email({ email: b.email, password: b.password });
-        if (error) return out(action, classify.signIn(error), error);
-        reset(`neon:acct:sign-in:${acct}`);
-        return json(200, { ok: true });
+        const r = await call(() => auth.api.signInEmail({ body: { email: b.email, password: b.password }, headers, returnHeaders: true }));
+        if (r.error) return out(action, classify.signIn(r.error), r.error);
+        reset(`auth:acct:sign-in:${acct}`);
+        return withCookies(json(200, { ok: true }), r.cookies);
       }
       case "sign-up": {
         const problem = passwordProblem(b.email, b.password);
         if (problem) return fail(422, "weak_password", problem);
-        const { error } = await auth.signUp.email({ email: b.email, password: b.password, name: b.name ?? b.email.split("@")[0].slice(0, 64) });
-        if (error) {
-          const o = classify.signUp(error);
-          if (o !== "accepted") return out(action, o, error);
+        // No working mail transport = no way to deliver the verification code: refuse up front instead of creating an account nobody can verify.
+        if (requireVerified() && !mailConfigured()) return out(action, classify.UPSTREAM);
+        const r = await call(() => auth.api.signUpEmail({ body: { email: b.email, password: b.password, name: b.name ?? b.email.split("@")[0].slice(0, 64) }, headers, returnHeaders: true }));
+        if (r.error) {
+          const o = classify.signUp(r.error);
+          if (o !== "accepted") return out(action, o, r.error);
         }
-        // Same answer for a new and an existing address. With verification on, the code is sent by Neon to the address that was entered.
-        return json(200, { ok: true, needsVerify: neonRequireVerified() });
+        // Same answer for a new and an existing address. With verification on, the code is e-mailed to the address that was entered.
+        return json(200, { ok: true, needsVerify: requireVerified() });
       }
       case "verify": {
-        const { data, error } = await auth.emailOtp.verifyEmail({ email: b.email, otp: b.code });
-        if (error) return out(action, classify.verify(error), error);
-        // With "auto sign-in after verification" Neon returns a session token and the SDK has already set the session cookies.
-        return json(200, { ok: true, signedIn: Boolean(data?.token) });
+        const r = await call(() => auth.api.verifyEmailOTP({ body: { email: b.email, otp: b.code }, headers, returnHeaders: true }));
+        if (r.error) return out(action, classify.verify(r.error), r.error);
+        // autoSignInAfterVerification: Better Auth returns a session token and its Set-Cookie headers, forwarded here.
+        return withCookies(json(200, { ok: true, signedIn: Boolean((r.data as { token?: string | null } | null)?.token) }), r.cookies);
       }
       case "resend": {
-        const origin = (process.env.ENIGMA_PUBLIC_ORIGIN ?? "").replace(/\/$/, "");
-        const { error } = await auth.sendVerificationEmail({ email: b.email, ...(origin ? { callbackURL: `${origin}/sign-in` } : {}) });
-        if (error) {
-          const o = classify.resend(error);
-          if (o !== "accepted") return out(action, o, error);
+        const r = await call(() => auth.api.sendVerificationOTP({ body: { email: b.email, type: "email-verification" }, headers, returnHeaders: true }));
+        if (r.error) {
+          const o = classify.resend(r.error);
+          if (o !== "accepted") return out(action, o, r.error);
         }
         return json(200, { ok: true });                                         // identical whether the account exists, is verified, or not
       }
       default: {
-        await auth.signOut();
+        const r = await call(() => auth.api.signOut({ headers, returnHeaders: true }));
         cacheClearAll();
-        return json(200, { ok: true });
+        return withCookies(json(200, { ok: true }), r.cookies);
       }
     }
   } catch {
-    console.warn(`[enigma.neon-auth] action=${action} upstream_status=exception upstream_code=none`);
+    console.warn(`[enigma.auth] action=${action} upstream_status=exception upstream_code=none`);
     return out(action, classify.UPSTREAM);
   }
 }
 
-/** GET /api/auth/neon/me: the signed-in Neon user (id, email, name, verified flag) or 401. Never returns a token. */
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
+/** GET /api/auth/me: the signed-in user (id, email, name, verified flag) or 401. Never returns a token. */
+export async function GET(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
   const { action } = await ctx.params;
-  if (action !== "me" || !neonAuthEnabled()) return fail(404, "not_found", "not found");
-  const auth = await getNeonAuth();
+  if (action !== "me" || !authEnabled()) return fail(404, "not_found", "not found");
+  const auth = await getAuth();
   if (!auth) return fail(503, "auth_unavailable", "authentication is not available");
   try {
-    const { data: s } = await auth.getSession();
+    const s = await auth.api.getSession({ headers: req.headers });
     const u = s?.user;
     if (!u?.id) return fail(401, "unauthorized", "authentication required");
-    return json(200, { id: `neon:${u.id}`, email: u.email ?? "", name: u.name ?? "", emailVerified: u.emailVerified === true });
+    return json(200, { id: `ba:${u.id}`, email: u.email ?? "", name: u.name ?? "", emailVerified: u.emailVerified === true });
   } catch {
     return fail(502, "auth_unavailable", "Authentication is temporarily unavailable.");
   }
