@@ -15,7 +15,7 @@ DIR = ROOT / "docs" / "kaggle" / "diagnostics"
 spec = importlib.util.spec_from_file_location("nbgen", ROOT / "scripts" / "build_kaggle_diagnostic_notebooks.py")
 gen = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gen)
-N1, N2, N3 = "01_enigma_kaggle_platform_aws_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_aws_integration"
+N1, N2, N3 = "01_enigma_kaggle_platform_oci_diagnostics", "02_stokastisk_build5_kaggle_t4_validation", "03_enigma_stokastisk_build5_oci_integration"
 
 
 def code(name):
@@ -51,35 +51,34 @@ def test_gpu_notebooks_verify_the_exact_published_build5_bytes_before_installing
     assert "pre_rc, pre_conflicts = pip_check()" in text and "and not new_conflicts)" in text                   # install PASS requires no NEW conflict
 
 
-def test_notebook_01_is_stdlib_only_and_orders_idle_controls_aws_target():
+def test_notebook_01_is_stdlib_only_and_orders_controls_diag_target_without_idle():
     text = "\n".join(code(N1))
     assert "REQUIRE_NO_INPUTS = True" in code(N1)[0]
-    assert not re.search(r"^\s*(import|from)\s+(torch|pynvml|vllm|stokastisk|triton|enigma_connector|docker|kubernetes)\b", text, re.M)
+    assert not re.search(r"^\s*(import|from)\s+(torch|pynvml|vllm|stokastisk|triton|enigma_connector|docker|kubernetes|oci|boto3)\b", text, re.M)
     assert '"-m", "pip"' not in text and '"git",' not in text and "kubectl" not in text and "docker " not in text.lower()
-    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "token_getter" not in text and not re.search(r"^\s*(import|from)\s+boto3", text, re.M)
-    order = [text.index(k) for k in ('observe("idle_10min", 600', 'get("pypi"', 'observe("controls_survival_120s"', 'check_credential("ENIGMA_DIAG_KEY"',
-                                     'rmark("aws_first_event"', "dup = resubmit_last()", 'observe("aws_survival", 600', 'rcheck("target_marker", "before_target"',
+    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "token_getter" not in text
+    assert "idle_10min" not in text and "EXPERIMENT_ID" not in text                                  # no mandatory idle loop, no A-D experiments
+    order = [text.index(k) for k in ('get("pypi"', 'observe("controls_survival_60s"', 'check_credential("ENIGMA_DIAG_KEY"', 'rmark("diag_first_event"',
+                                     "dup = resubmit_last()", 'observe("diag_survival_120s"', 'rcheck("target_marker", "before_target"',
                                      'rmark("after_target"', 'observe("post_target_passive_60s"', 'observe("post_target_active_60s"', 'verdict("overall", "PASS"')]
     assert order == sorted(order)
     cells = code(N1)
-    idle = next(i for i, c in enumerate(cells) if 'observe("idle_10min"' in c)
-    assert not any(re.search(r"^(check_credential|get_credential|rmark|rcheck)\(", c, re.M) for c in cells[:idle + 1])
+    ctl = next(i for i, c in enumerate(cells) if 'observe("controls_survival_60s"' in c)
+    assert not any(re.search(r"^(check_credential|get_credential|rmark|rcheck)\(", c, re.M) for c in cells[:ctl + 1])   # no secret, no remote before controls
     pre = next(c for c in cells if 'check_credential("ENIGMA_DIAG_KEY"' in c)
     assert 'refresh_credentials("ENIGMA_DIAG_KEY")' in pre and "observe(" not in pre and "ATTEMPT =" not in pre
 
 
-def test_notebook_01_defaults_to_the_aws_only_experiment_and_never_contacts_railway_in_it():
-    assert 'EXPERIMENT_ID = "A"' in code(N1)[0]
-    target = next(c for c in code(N1) if "TARGETS = {" in c)
-    # In A the target cell returns before any request; the Railway URL is only reachable from the B / D branches.
-    a = target.index('if EXPERIMENT_ID == "A":')
-    assert a < target.index("rcheck(") < target.index("urlopen(req", a) and a < target.index("subprocess.Popen(")     # CHILD source is only a string above
-    assert 'observe("aws_survival", 600, every=15, remote_at=tuple(range(60, 601, 60)), durable_begin=True)' in "\n".join(code(N1))
+def test_notebook_01_sends_exactly_one_health_request_to_the_oci_host_and_blocks_while_undeployed():
+    target = next(c for c in code(N1) if 'rcheck("target_marker", "before_target"' in c)
+    assert 'url = DIAG_URL.rsplit("/api/v1/", 1)[0] + "/api/v1/health"' in target and target.count("urlopen(") == 1
+    assert target.index("rcheck(") < target.index("urlopen(") and "subprocess" not in target
     post = next(c for c in code(N1) if "post_target_passive_60s" in c)
-    assert 'observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)' in post            # passive: no remote_at
-    assert "remote_at=(5, 15, 30, 60)" in post
-    assert gen.AWS_RUNTIME_URL in target and "child_pid=child.pid" in target and "child.kill()" in target
-    assert 'subprocess.Popen([sys.executable, "-I", "-c", CHILD, url]' in target
+    assert 'observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)' in post and "remote_at=(5, 15, 30, 60)" in post
+    probe = next(c for c in code(N1) if "dup = resubmit_last()" in c)
+    assert probe.index("if not DIAG_URL:") < probe.index('rmark("diag_first_event"') and "blocked=True" in probe
+    text = "\n".join(code(N1))
+    assert not any(x in text for x in ("railway.app", "lambda-url", "on.aws"))
 
 
 def test_notebook_02_never_contacts_enigma():
@@ -110,15 +109,15 @@ def test_notebook_03_is_gated_supervised_ordered_and_requires_a_real_job():
     assert "Prepared; NOT yet executed end to end" in "".join(json.loads((DIR / f"{N3}.ipynb").read_text())["cells"][0]["source"])
 
 
-def test_notebook_03_defaults_to_aws_and_never_contacts_railway_in_the_aws_modes():
+def test_notebook_03_uses_one_fixed_oci_endpoint_without_fallback():
     first = code(N3)[0]
-    assert 'INTEGRATION_MODE = "aws-staging"' in first and "ALLOW_RAILWAY_COMPARISON = False" in first
-    assert 'RUNTIME_TRANSPORT = {"aws-staging": "aws", "aws-production": "aws", "railway-comparison": "railway"}[INTEGRATION_MODE]' in first
+    assert 'INTEGRATION_MODE = "oci-production"' in first and 'RUNTIME_TRANSPORT = "oci"' in first and "ALLOW_RAILWAY_COMPARISON" not in first
     gate = next(c for c in code(N3) if 'verdict("runtime_capabilities", "PASS" if ok' in c)
-    assert gate.count("probe_health(") == 1 and "urlopen(" not in gate                                   # one hardened probe of the selected URL
-    assert 'API_URL = MODES[INTEGRATION_MODE]["url"]' in gate and gen.AWS_RUNTIME_URL in gate and gen.API_URL in gate
+    assert gate.count("probe_health(") == 1 and "urlopen(" not in gate                                   # one hardened probe of the configured URL
+    assert 'API_URL = MODES[INTEGRATION_MODE]["url"]' in gate and gate.index("if not API_URL:") < gate.index("probe_health(")
+    assert '"store": "postgres", "auth": "betterauth"' in gate and gen.DATA_PLANES["oci-production"] in gate
     text = "\n".join(code(N3))
-    assert text.count(gen.API_URL) == 1                                                                 # the Railway URL appears ONLY in the comparison mode
+    assert not any(x in text for x in ("railway.app", "lambda-url", "on.aws", "aws-staging"))
     assert 'assert API_URL == MODES[INTEGRATION_MODE]["url"], "transport changed mid-attempt"' in text and "api_url=API_URL if cloud" in text
     assert "fallback" not in text.lower().replace("never falls back", "").replace("fallen back", "").replace("no fallback", "")
 
