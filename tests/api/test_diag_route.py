@@ -103,3 +103,25 @@ def test_route_is_mounted_and_separate_from_runtime_auth():
     assert c.post("/api/v1/jobs/claim", json={}, headers={"authorization": h}).status_code == 401
     pr = c.get("/api/v1/admin/prune", headers={"authorization": "Bearer " + "c" * 32})
     assert pr.status_code == 200 and "diag_events" in pr.json()
+
+
+def _prune_app(hold: str):
+    from enigma_api.store.memory import MemoryStore as _MS
+    st = _MS()
+    calls = []
+    orig = st.prune
+    st.prune = lambda **kw: (calls.append(kw), orig(**kw))[1]
+    app = create_app(Settings(env="test", cron_secret="c" * 32, retention_hold_until=hold), store=st)
+    return TestClient(app), calls
+
+
+def test_retention_hold_keeps_events_only_while_active_and_is_bounded():
+    now = datetime.now(timezone.utc)
+    c, calls = _prune_app((now + timedelta(days=3)).isoformat())
+    r = c.get("/api/v1/admin/prune", headers={"authorization": "Bearer " + "c" * 32}).json()
+    assert calls[-1] == {"event_hours": 87600} and r["events_retention_hold_until"]
+    c, calls = _prune_app((now - timedelta(minutes=1)).isoformat())                      # expired: normal 48 h retention resumes by itself
+    r = c.get("/api/v1/admin/prune", headers={"authorization": "Bearer " + "c" * 32}).json()
+    assert calls[-1] == {} and r["events_retention_hold_until"] is None
+    for bad in ((now + timedelta(days=8)).isoformat(), "2026-12-01", "not-a-date"):     # > 7 days, no timezone, garbage
+        assert any("ENIGMA_RETENTION_HOLD_UNTIL" in p for p in Settings(env="test", retention_hold_until=bad).validate_for_startup())

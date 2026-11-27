@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     dev_auth: bool = False
     dev_jwt_secret: str = ""
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
+    # Migration hold (owner-approved 2026-11-28): while now < ENIGMA_RETENTION_HOLD_UNTIL (ISO 8601 with timezone), the daily prune keeps the
+    # streaming events of finished jobs (imported history); every other retention rule still runs. At most 7 days ahead; it expires on its own.
+    retention_hold_until: str = ""
     # limits
     max_body_bytes_runtime: int = 256 * 1024
     max_body_bytes_telemetry: int = 1024 * 1024
@@ -60,6 +63,18 @@ class Settings(BaseSettings):
         from urllib.parse import urlparse
         u = urlparse(self.neon_auth_base_url)
         return f"https://{u.netloc}" if u.scheme == "https" and u.netloc else ""
+
+    @property
+    def retention_hold(self):
+        """Parsed hold end (aware datetime) or None. Invalid values are reported by validate_for_startup."""
+        from datetime import datetime
+        if not self.retention_hold_until:
+            return None
+        try:
+            t = datetime.fromisoformat(self.retention_hold_until.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return t if t.tzinfo else None
 
     @property
     def auth_origin(self) -> str:
@@ -151,6 +166,13 @@ class Settings(BaseSettings):
                 problems.append("NEON_AUTH_BASE_URL must be an https URL (it pins the token issuer and audience)")
             elif self.neon_auth_jwks_url and not self.neon_auth_jwks_url.startswith(self.neon_origin + "/"):
                 problems.append("NEON_AUTH_JWKS_URL must be on the same origin as NEON_AUTH_BASE_URL")
+        if self.retention_hold_until:
+            from datetime import datetime, timedelta, timezone
+            h = self.retention_hold
+            if h is None:
+                problems.append("ENIGMA_RETENTION_HOLD_UNTIL must be an ISO 8601 timestamp with a timezone")
+            elif h > datetime.now(timezone.utc) + timedelta(days=7, hours=1):
+                problems.append("ENIGMA_RETENTION_HOLD_UNTIL may be at most 7 days ahead (bounded migration hold)")
         if self.dev_auth and (prod or self.env not in ("development", "test")):
             problems.append("ENIGMA_DEV_AUTH must not be enabled in production/Railway/non-dev environments")
         if self.dev_auth and len(self.dev_jwt_secret) < 32:

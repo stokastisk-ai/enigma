@@ -1,4 +1,7 @@
-# Enigma public edge. Automatic HTTPS (Let's Encrypt, publicly trusted) for {$ENIGMA_HOST}; port 80 only answers ACME http-01 and redirects.
+# Enigma public edge. Automatic HTTPS from Let's Encrypt (publicly trusted) for {$ENIGMA_HOST}, which may be the VM's public IPv4 address itself (no
+# domain needed) or a DNS name. IP certificates require the ACME "shortlived" profile (160 h); it is requested for every host so renewal behaviour
+# is identical. Caddy renews automatically using ACME Renewal Information (verified 2026-11-27 with Caddy 2.10.2 against Pebble: IP SAN issued, 160 h
+# lifetime, unattended renewal without restart). Port 80 only answers ACME http-01 and redirects. enigma-certcheck.timer alerts below 72 h left.
 # Public surface:
 #   * the Next.js app (pages, /api/auth/*, the authenticated BFF /api/enigma/*)
 #   * the Kaggle connector's runtime plane on FastAPI (bearer runtime tokens) and the health probe
@@ -15,6 +18,12 @@
 }
 
 {$ENIGMA_HOST} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+
 	encode zstd gzip
 
 	header {

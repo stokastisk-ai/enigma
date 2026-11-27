@@ -351,7 +351,12 @@ def _require_cron_secret(request: Request, authorization: str | None) -> None:
 @admin.get("/prune")
 def prune(request: Request, authorization: str | None = Header(default=None)):
     _require_cron_secret(request, authorization)
-    out = state(request).store.prune()
+    from datetime import datetime, timezone
+    hold = state(request).settings.retention_hold
+    held = hold is not None and datetime.now(timezone.utc) < hold
+    # During the bounded migration hold finished-job streaming events are kept (event_hours ~10 years); everything else is pruned as usual.
+    out = state(request).store.prune(event_hours=87600) if held else state(request).store.prune()
+    out = {**(out or {}), "events_retention_hold_until": hold.isoformat() if held else None}
     diag = getattr(request.app.state, "diag", None)
     if diag is not None:
         from datetime import datetime, timezone
