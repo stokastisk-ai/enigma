@@ -17,6 +17,7 @@ OUT = ROOT / "docs" / "kaggle" / "diagnostics"
 ENIGMA_REV = "8648d91632b5bbf5ae174403a01578c04a5eff20"           # reviewed CONNECTOR-SOURCE commit (has serverctl); pinned separately from the notebook commit
 API_URL = "https://enigma-api-production-c8cffe9d.up.railway.app"
 DIAG_URL = "https://ygjtcfhrgkhyybl4gotvzmfa440zzlkh.lambda-url.us-east-1.on.aws/"     # independent AWS diagnostic ingestion (Lambda Function URL)
+AWS_RUNTIME_URL = "https://ifmsy4cngt3kd474oqayy6b5py0ufiht.lambda-url.us-east-1.on.aws"   # optional AWS runtime API (same FastAPI app on Lambda); ISOLATED staging data until the cutover
 WHEEL = "https://huggingface.co/waqasm86/stokastisk/resolve/main/wheels/stokastisk-0.1.0-5-cp313-cp313-linux_x86_64.whl"
 WHEEL_SHA256 = "fe80d7c36fa78cf8a26feb1e00bb5f1f006ca45a027450353603976320ae0b3e"
 WHEEL_SIZE = 38057515
@@ -57,9 +58,14 @@ REQUIRE_NO_INPUTS = __NO_INPUTS__                       # notebook 01 must run w
 _inputs = sorted(os.listdir("/kaggle/input")) if os.path.isdir("/kaggle/input") else []
 if REQUIRE_NO_INPUTS and _inputs:
     raise DiagnosticStop(f"INCONCLUSIVE: wrong environment. Inputs are attached {_inputs}; remove every input and start a NEW session")
+# ---- configuration: edit ONLY these lines, before running anything; they are fixed for the whole attempt ----
 __MODE_LINE__
+# ------------------------------------------------------------------------------------------------------------
 assert VALIDATION_MODE in ("standalone", "aws-assisted", "aws-required"), VALIDATION_MODE
-EXPERIMENT = ("build5" if EXPECT == "gpu" else "no-sdk") + ("" if VALIDATION_MODE == "aws-required" else "-" + VALIDATION_MODE)   # recorded in every MARK
+assert EXPERIMENT_ID in ("A", "B", "C", "D", "-"), EXPERIMENT_ID
+assert RUNTIME_TRANSPORT in ("none", "railway", "aws"), RUNTIME_TRANSPORT
+EXPERIMENT = ("build5" if EXPECT == "gpu" else "no-sdk") + ("" if VALIDATION_MODE == "aws-required" else "-" + VALIDATION_MODE) \
+    + ("" if EXPERIMENT_ID == "-" else "-exp" + EXPERIMENT_ID) + ("" if RUNTIME_TRANSPORT == "none" else "-via-" + RUNTIME_TRANSPORT)   # in every MARK
 
 ATTEMPT = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
 ATTEMPT_DIR = f"/kaggle/working/enigma-diag-attempts/{NOTEBOOK}/{ATTEMPT}"
@@ -105,7 +111,7 @@ def ident():
 
 
 def mark(name, **fields):
-    rec = {"attempt": ATTEMPT, "nb": NOTEBOOK, "experiment": EXPERIMENT, "mode": VALIDATION_MODE, "marker": name, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    rec = {"attempt": ATTEMPT, "nb": NOTEBOOK, "experiment": EXPERIMENT, "mode": VALIDATION_MODE, "transport": RUNTIME_TRANSPORT, "marker": name, "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "t": round(time.monotonic() - T0, 2), **ident(), **host(), **fields}
     line = redact(json.dumps(rec, default=str))
     with open(f"{ATTEMPT_DIR}/markers.jsonl", "a") as fh:
@@ -130,22 +136,7 @@ def require(*steps):
         raise DiagnosticStop(f"INCONCLUSIVE: prerequisite(s) did not PASS in this session: {bad}. Start a new session and run from the top.")
 
 
-def observe(step, seconds, every=15.0, sample=None):
-    """Survival observation: one MARK every `every` s. PASS only if the full duration elapsed with no cgroup OOM kill and no failed sample check."""
-    start, oom0, n, problems = time.monotonic(), host()["cgroup_events"].get("oom_kill"), 0, []
-    mark(step + "_begin", seconds=seconds, every=every)
-    while time.monotonic() - start < seconds:
-        time.sleep(min(every, max(0.0, seconds - (time.monotonic() - start))))
-        n += 1
-        extra = sample() if sample else {}
-        if extra.get("problem"):
-            problems.append(extra["problem"])
-        mark(step + "_alive", i=n, **extra)
-    el, oom1 = time.monotonic() - start, host()["cgroup_events"].get("oom_kill")
-    delta = None if oom0 is None or oom1 is None else oom1 - oom0
-    ok = el >= seconds - 1.0 and delta in (None, 0) and not problems
-    verdict(step, "PASS" if ok else "FAIL", f"observed {el:.0f}/{seconds}s, oom_kill delta {delta}, problems {problems[:3]}", observed_s=round(el, 1),
-            oom_kill_delta=delta, samples=n)
+__OBSERVE__
 
 
 def export_evidence():
@@ -316,6 +307,7 @@ verdict("local_inference", "PASS" if len(chunks) > 1 and "".join(chunks).strip()
 CELLS = ROOT / "scripts" / "kaggle_cells"
 REMOTE = (CELLS / "diag_credentials.py").read_text()        # shared credential + transport cell (tests exec this exact text)
 EVIDENCE = (CELLS / "evidence.py").read_text()               # inlined into the prelude
+OBSERVE = (CELLS / "observe.py").read_text()                 # inlined into the prelude
 
 
 SAFE_STOP = r'''# Build-5-safe shutdown (no connector needed): build-5 ServerProcess.stop() is only safe while the server's leader process is unreaped. If the leader
@@ -349,7 +341,7 @@ verdict("connector_fetch", "PASS" if ok else "FAIL", f"HEAD={head}", head=head, 
 
 TOKEN_GETTER = r'''# Runtime credential (ENIGMA_RUNTIME_TOKEN): read through the shared helper only when a cloud stage needs it; type- and format-checked;
 # never printed, stored, or put in os.environ. A diagnostic-key problem can never be reported as a runtime-token problem (separate secrets, codes, steps).
-API_URL = "__API__"
+assert API_URL == ENDPOINTS[RUNTIME_TRANSPORT], "transport changed mid-attempt"     # selected by the capability gate; never switched
 os.environ.pop("ENIGMA_RUNTIME_TOKEN", None)
 
 
@@ -382,15 +374,24 @@ def sub(text: str, **kw: str) -> str:
 
 
 MODE_LINES = {
-    "02_stokastisk_build5_kaggle_t4_validation": ('VALIDATION_MODE = "standalone"   # EDIT deliberately: "standalone" = Mode A (no AWS traffic, no secret needed) | '
-                                                  '"aws-assisted" = Mode B (ENIGMA_DIAG_KEY required; markers to AWS)'),
+    "01_enigma_kaggle_platform_aws_diagnostics": (
+        'VALIDATION_MODE = "aws-required"\n'
+        'EXPERIMENT_ID = "A"            # ONE per fresh session: "A" AWS-only (default; never contacts Railway) | "B" Railway direct | '
+        '"C" AWS runtime endpoint | "D" Railway via a short-lived subprocess\n'
+        'RUNTIME_TRANSPORT = "none"'),
+    "02_stokastisk_build5_kaggle_t4_validation": (
+        'VALIDATION_MODE = "standalone"   # "standalone" = Mode A (no AWS traffic, no secret needed) | "aws-assisted" = Mode B (ENIGMA_DIAG_KEY required)\n'
+        'EXPERIMENT_ID = "-"\nRUNTIME_TRANSPORT = "none"'),
+    "03_enigma_stokastisk_build5_aws_integration": (
+        'VALIDATION_MODE = "aws-required"\nEXPERIMENT_ID = "-"\n'
+        'RUNTIME_TRANSPORT = "railway"   # "railway" = the Railway FastAPI (verified production) | "aws" = the AWS runtime endpoint (only if it reports '
+        'the production deployment). Fixed for the attempt: never switched or fallen back mid-run.'),
 }
 
 
 def prelude(name: str) -> dict:
-    mode = MODE_LINES.get(name, 'VALIDATION_MODE = "aws-required"           # this notebook always requires the independent AWS diagnostic endpoint')
-    return code(sub(PRELUDE, NOTEBOOK=name, EXPECT=NOTEBOOKS[name], NO_INPUTS=str(name in NO_INPUTS_NOTEBOOKS), MODE_LINE=mode,
-                    EVIDENCE=EVIDENCE.strip("\n")))
+    return code(sub(PRELUDE, NOTEBOOK=name, EXPECT=NOTEBOOKS[name], NO_INPUTS=str(name in NO_INPUTS_NOTEBOOKS), MODE_LINE=MODE_LINES[name],
+                    EVIDENCE=EVIDENCE.strip("\n"), OBSERVE=OBSERVE.strip("\n")))
 
 
 def header(title: str, body: str, name: str) -> dict:
@@ -426,7 +427,7 @@ def get(name, url):
     mark("request_begin", target=name)
     t = time.monotonic(); row = {"target": name}
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Enigma-Kaggle-Diagnostic/5.0", "Accept": "*/*", "Connection": "close"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "*/*", "Connection": "close"})
         with urllib.request.urlopen(req, timeout=60) as r:
             row["http"] = r.status; r.read(4096)
     except urllib.error.HTTPError as e:
@@ -439,12 +440,22 @@ def get(name, url):
 rows = [get("pypi", "https://pypi.org/simple/pip/"), get("gstatic", "https://www.gstatic.com/generate_204"), get("huggingface", "https://huggingface.co/api/models/Qwen/Qwen2.5-0.5B-Instruct")]
 ok = all(r.get("http") in (200, 204) for r in rows)
 verdict("controls_https", "PASS" if ok else "INCONCLUSIVE", f"{[(r['target'], r.get('http'), r.get('latency_s')) for r in rows]}")"""
-    railway = sub(r"""require("aws_survival_120s")
-import urllib.request, urllib.error
-rcheck("railway_marker", "before_railway", stage="railway", phase="before", target="enigma_health")   # no Railway request without a durable AWS marker
+    aws_window = r"""require("aws_endpoint")
+# Experiment A: 10 minutes of AWS-only survival, one durable marker per minute (10 requests): it runs well past the VM uptime (~1390 s) at which
+# the 2026-11-26 23:31 session ended, so a lifetime-only explanation is tested without Railway. Other experiments: 2 minutes, 4 markers.
+if EXPERIMENT_ID == "A":
+    observe("aws_survival", 600, every=15, remote_at=tuple(range(60, 601, 60)), durable_begin=True)
+else:
+    observe("aws_survival", 120, every=15, remote_at=(30, 60, 90, 120), durable_begin=True)"""
+    target = sub(r"""# The ONE target request of this experiment (A: none). Exactly one bounded request; never repeated automatically after an unexplained fatal session.
+require("aws_survival")
+TARGETS = {"B": ("railway_health", "__API__/api/v1/health"), "C": ("aws_runtime_health", "__AWSRT__/api/v1/health"),
+           "D": ("railway_health_subprocess", "__API__/api/v1/health")}
+CHILD = r'''
+import json, sys, time, urllib.request, urllib.error
 t = time.monotonic(); row = {}
 try:
-    req = urllib.request.Request("__API__/api/v1/health", headers={"User-Agent": "Enigma-Kaggle-Diagnostic/5.0", "Accept": "application/json", "Connection": "close"})
+    req = urllib.request.Request(sys.argv[1], headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json", "Connection": "close"})
     with urllib.request.urlopen(req, timeout=60) as r:
         row["http"] = r.status; r.read(4096)
 except urllib.error.HTTPError as e:
@@ -452,29 +463,83 @@ except urllib.error.HTTPError as e:
 except Exception as e:
     row["exc"] = type(e).__name__
 row["latency_s"] = round(time.monotonic() - t, 3)
-after = rmark("after_railway", stage="railway", phase="after", target="enigma_health", **row)
-verdict("railway_health", "PASS" if row.get("http") == 200 and after else "FAIL", f"{row}, after-marker {after['code']}")""", API=API_URL)
-    final = r"""require("railway_health")
-observe("railway_survival_120s", 120, every=15, sample=lambda: {"problem": None if rmark("railway_alive", stage="railway_survival") else "aws not acknowledged"})
-REQUIRED = ("idle_10min", "controls_https", "controls_survival_120s", "diag_key_preflight", "aws_endpoint", "aws_survival_120s", "railway_marker",
-            "railway_health", "railway_survival_120s")
+print(json.dumps(row))
+'''
+if EXPERIMENT_ID == "A":
+    mark("target_not_applicable", note="experiment A never contacts Railway or the AWS runtime endpoint")
+else:
+    name, url = TARGETS[EXPERIMENT_ID]
+    assert "PENDING" not in url, "experiment C needs the deployed AWS runtime endpoint (AWS_RUNTIME_URL)"
+    rcheck("target_marker", "before_target", stage=name, phase="before", target=name)             # no target request without a durable marker
+    t = time.monotonic(); row = {"target": name}
+    if EXPERIMENT_ID == "D":
+        # Same destination and request semantics, but from a short-lived child Python process (bounded lifetime; only this child is ever signalled).
+        child = subprocess.Popen([sys.executable, "-I", "-c", CHILD, url], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        mark("child_started", child_pid=child.pid)
+        try:
+            out, _ = child.communicate(timeout=90)
+            row.update(json.loads(out.strip().splitlines()[-1]) if out.strip() else {"exc": "NoOutput"})
+        except subprocess.TimeoutExpired:
+            child.kill(); child.communicate(); row["exc"] = "ChildTimeout"
+        except ValueError:
+            row["exc"] = "BadChildOutput"
+        row.update(child_pid=child.pid, child_exit=child.returncode)
+    else:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json", "Connection": "close"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                row["http"] = r.status; r.read(4096)
+        except urllib.error.HTTPError as e:
+            row["http"] = e.code
+        except Exception as e:
+            row["exc"] = type(e).__name__
+        row["latency_s"] = row.get("latency_s") or round(time.monotonic() - t, 3)
+    row["wall_s"] = round(time.monotonic() - t, 3)
+    mark("target_end", **row)
+    after = rmark("after_target", stage=name, phase="after", target=name, http=row.get("http"), latency_s=row.get("latency_s"), exc=row.get("exc"),
+                  child_pid=row.get("child_pid"), child_exit=row.get("child_exit"))
+    # Independent outcomes: the HTTP request itself, and the durable after-marker. Survival is judged by the next cell.
+    verdict("target_request", "PASS" if row.get("http") == 200 else "FAIL", f"{row}", **{k: v for k, v in row.items() if k != "target"})
+    verdict("target_after_marker", "PASS" if after else "INCONCLUSIVE", f"after-marker {after['code']}")""", API=API_URL, AWSRT=AWS_RUNTIME_URL)
+    post = r"""# Post-target observation, in two SEPARATE phases so a termination can be attributed:
+#   1) 60 s PASSIVE: no network at all; a local, printed tick every 2 s (the saved notebook output brackets a termination to ~2 s).
+#   2) 60 s ACTIVE: durable AWS markers at +5, +15, +30 and +60 s of that phase, each bracketed by local submit / result markers.
+if EXPERIMENT_ID != "A":
+    require("target_request", "target_after_marker")
+    observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)
+    observe("post_target_active_60s", 60, every=5, remote_at=(5, 15, 30, 60))
+else:
+    mark("post_target_not_applicable")"""
+    final = r"""# Overall verdict. Outcomes are reported separately: HTTP success, durable markers, survival windows, overall.
+REQUIRED = ["idle_10min", "controls_https", "controls_survival_120s", "diag_key_preflight", "aws_endpoint", "aws_survival"]
+if EXPERIMENT_ID != "A":
+    REQUIRED += ["target_request", "target_after_marker", "post_target_passive_60s", "post_target_active_60s"]
+summary = {s: RESULTS.get(s, {}).get("status", "NOT_RUN") for s in REQUIRED}
+mark("outcomes", experiment_id=EXPERIMENT_ID, **summary)
 require(*REQUIRED)
-rcheck("overall", "final", verdict="PASS", note="all comparisons survived")
-verdict("overall", "PASS", f"all {len(REQUIRED)} steps PASSED in this session; status code 44 root cause: NOT_ESTABLISHED by this notebook")"""
+rcheck("overall", "final", verdict="PASS", note=f"experiment {EXPERIMENT_ID}: all {len(REQUIRED)} steps PASSED")
+verdict("overall", "PASS", f"experiment {EXPERIMENT_ID}: all {len(REQUIRED)} steps PASSED in this session (status code 44 root cause: NOT_ESTABLISHED)")"""
     return [
-        header("01. Kaggle platform + independent AWS networking diagnostics", "A troubleshooting control only: **no Stokastisk, no CUDA, no LLM, no Enigma "
-               "connector, no runtime token, no Git clone, no boto3, no AWS credential.** It separates four things that earlier notebooks ran in the same "
-               "second: (1) idle platform survival (fully offline, before any secret is read), (2) ordinary public HTTPS, (3) the independent AWS "
-               "diagnostic endpoint, (4) the Railway FastAPI health endpoint, with a survival window after each. Attach NO inputs; only the Kaggle Secret "
-               f"`ENIGMA_DIAG_KEY`.\n\n{SECRETS_MD}\n\n"
-               "**Reading the result:** the AWS table keeps the last acknowledged marker even if the VM disappears. Death during `controls_survival` = "
-               "ordinary HTTPS is enough; during `aws_survival` = any third-party endpoint; only during `railway_survival` = correlated with the Railway "
-               "request specifically. Correlation is not a cause: only Kaggle's platform logs can explain a status-code-44 termination.", n),
+        header("01. Kaggle platform + independent AWS networking diagnostics (experiments A-D)", "A troubleshooting control only: **no Stokastisk, no "
+               "CUDA, no LLM, no Enigma connector, no runtime token, no Git clone, no boto3, no AWS credential, no Docker/Kubernetes.** Choose ONE "
+               "experiment per FRESH session in the first code cell (`EXPERIMENT_ID`):\n\n"
+               "* **A (default): AWS-only.** 10-min offline idle, public HTTPS, credential preflight, AWS ack + duplicate test, 10 min AWS survival (past the uptime at which earlier sessions died). "
+               "Never contacts Railway.\n"
+               "* **B: Railway direct.** As A (2-min AWS window), then ONE durable before-marker, ONE Railway `/api/v1/health`, a durable after-marker, "
+               "60 s PASSIVE observation (no network, a printed tick every 2 s), then 60 s with 4 durable markers.\n"
+               "* **C: AWS runtime endpoint.** As B, but the one request goes to the optional AWS runtime API health endpoint instead of Railway.\n"
+               "* **D: Railway via a short-lived subprocess.** As B, but the same request runs in a bounded child Python process (pid + exit code "
+               "recorded).\n\n"
+               "Do not repeat B or D in the same session after an unexplained termination. Attach NO inputs; only the Kaggle Secret `ENIGMA_DIAG_KEY`."
+               f"\n\n{SECRETS_MD}\n\n"
+               "**Reading the result:** AWS (table `enigma-diag`, partition `ATT#<attempt>`) keeps every acknowledged marker even if the VM disappears; "
+               "the saved notebook output keeps the printed local ticks. Remote logging cannot capture the final instant of a VM termination. "
+               "Correlation is not a cause: only Kaggle's platform logs can explain a status-code-44 termination.", n),
         prelude(n),
         code(sub(REMOTE, DIAG=DIAG_URL)),
-        md("## 01a. Idle survival: 10 minutes, no network at all (no secret is read yet)"),
+        md("## 01a. Idle survival: 10 minutes, PASSIVE, no network at all (no secret is read yet)"),
         code('observe("idle_10min", 600, every=15)'),
-        md("## 01b. Ordinary public HTTPS controls, then 2 minutes of survival"),
+        md("## 01b. Ordinary public HTTPS controls, then 2 minutes of PASSIVE survival"),
         code(controls),
         code('require("controls_https")\nobserve("controls_survival_120s", 120, every=15)'),
         md("## 01c. Diagnostic credential preflight (re-runnable)\nReads `ENIGMA_DIAG_KEY` (a request to Kaggle's own secret service, nothing else) "
@@ -483,10 +548,13 @@ verdict("overall", "PASS", f"all {len(REQUIRED)} steps PASSED in this session; s
         code('require("controls_survival_120s")\nrefresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
         md("## 01d. Independent AWS diagnostic endpoint: first event, then an identical resubmission that must come back as a durable duplicate"),
         code(DIAG_PROBE),
-        code('require("aws_endpoint")\nobserve("aws_survival_120s", 120, every=30, sample=lambda: {"problem": None if rmark("aws_alive", stage="aws_survival") else "aws not acknowledged"})'),
-        md("## 01e. Railway FastAPI health (a durable AWS marker is REQUIRED before the request)"),
-        code(railway),
-        md("## 01f. Two minutes of post-Railway observation and the overall verdict"),
+        md("## 01e. AWS survival window (durable observation-start marker first; bounded markers)"),
+        code(aws_window),
+        md("## 01f. Experiments B / C / D only: the ONE target request (durable markers before and after)"),
+        code(target),
+        md("## 01g. Experiments B / C / D only: passive, then active post-target observation"),
+        code(post),
+        md("## 01h. Outcomes and overall verdict"),
         code(final),
         md("## Evidence export (local, redacted; the AWS record is the durable copy). Run it even after a stop."),
         code(EXPORT),
@@ -565,15 +633,20 @@ def nb_03() -> list[dict]:
 BASELINES_PASSED = False
 assert BASELINES_PASSED, "run notebooks 01 and 02 first"
 verdict("baselines_confirmed", "PASS", "operator confirmed 01 and 02 PASS")"""
-    prod_gate = sub(r"""# Gate 2: EVIDENCE that Enigma production has been cut over to the AWS backend (DynamoDB store + Cognito auth). Not an editable boolean: the public,
-# unauthenticated health endpoint reports the configured store and auth provider (no credential is sent). Until production reports dynamodb + cognito
-# this notebook stops HERE, before any GPU installation. (Production on 2026-11-27: Neon PostgreSQL + Neon Auth; Enigma PR #3 is still a draft.)
+    prod_gate = sub(r"""# Gate 2: capability EVIDENCE from the SELECTED runtime endpoint only (no request to the other one; not an editable boolean). The public,
+# unauthenticated health endpoint reports store, auth and deployment (no credential is sent). Requirements:
+#   railway: the endpoint must report deployment "production" with a durable store (postgres or dynamodb) and a real auth provider (neon or cognito).
+#   aws:     the AWS runtime endpoint must report deployment "production" AND the same store/auth as production. It reports "aws-staging-isolated" until
+#            the DynamoDB + Cognito production cutover makes it share production's data; until then this gate stops here, before any GPU work.
 require("baselines_confirmed", "aws_endpoint", "runtime_token_preflight")
 import urllib.request, urllib.error
-rcheck("production_gate_marker", "before_production_probe", stage="production_gate", phase="before", target="enigma_health")
+ENDPOINTS = {"railway": "__API__", "aws": "__AWSRT__"}
+API_URL = ENDPOINTS[RUNTIME_TRANSPORT]                       # fixed for the attempt; the connector never falls back to the other transport
+assert "PENDING" not in API_URL, "the AWS runtime endpoint is not deployed; use RUNTIME_TRANSPORT = \"railway\""
+rcheck("capability_marker", "before_capability_probe", stage="capability", phase="before", target=RUNTIME_TRANSPORT)
 t = time.monotonic(); row, info = {}, {}
 try:
-    req = urllib.request.Request("__API__/api/v1/health", headers={"User-Agent": "Enigma-Kaggle-Diagnostic/5.0", "Accept": "application/json"})
+    req = urllib.request.Request(API_URL + "/api/v1/health", headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
         row["http"] = r.status
         info = json.loads(r.read(4096))
@@ -583,12 +656,15 @@ except Exception as e:
     row["exc"] = type(e).__name__
 row["latency_s"] = round(time.monotonic() - t, 3)
 info = info if isinstance(info, dict) else {}
-store, auth = info.get("store"), info.get("auth")
-rmark("after_production_probe", stage="production_gate", phase="after", target="enigma_health", note=f"store={store} auth={auth}", **row)
-ok = row.get("http") == 200 and store == "dynamodb" and auth == "cognito"
-verdict("production_migration", "PASS" if ok else "INCONCLUSIVE",
-        f"production reports store={store!r} auth={auth!r} (http {row.get('http')}); required: dynamodb + cognito. AWS_PRODUCTION_MIGRATION is not verified, "
-        "so no GPU or cloud integration stage runs.", store=store, auth=auth)""", API=API_URL)
+store, auth, deployment = info.get("store"), info.get("auth"), info.get("deployment")
+rmark("after_capability_probe", stage="capability", phase="after", target=RUNTIME_TRANSPORT, note=f"store={store} auth={auth} deployment={deployment}", **row)
+ok = row.get("http") == 200 and deployment == "production" and store in ("postgres", "dynamodb") and auth in ("neon", "cognito")
+if RUNTIME_TRANSPORT == "aws":
+    ok = ok and store == "dynamodb" and auth == "cognito"
+verdict("runtime_capabilities", "PASS" if ok else "INCONCLUSIVE",
+        f"{RUNTIME_TRANSPORT} endpoint reports store={store!r} auth={auth!r} deployment={deployment!r} (http {row.get('http')}); "
+        + ("verified production endpoint" if ok else "NOT the verified production data plane: no GPU or cloud stage runs"),
+        store=store, auth=auth, deployment=deployment)""", API=API_URL, AWSRT=AWS_RUNTIME_URL)
     helper = r"""from enigma_connector.stage_runner import run_stage, MarkerLog
 from enigma_connector import serverctl
 INTERVAL_ARGS = ("--gpu-interval", "1.0", "--vllm-interval", "2.0", "--upload-interval", "5.0")      # explicit finite intervals, as in every verified run
@@ -616,7 +692,7 @@ def stage(name, **kw):
     verdict(f"stage_{name}", status, f"rc={res['exit']['returncode']} failed={failed}", run_id=(res.get("summary") or {}).get("run_id"), stats=stats)
     return res"""
     cloud_gate = r"""# Gate 3: confirm in Enigma (AWS-backed production) that the runtime is REAL (Mock off) and that no Playground job is queued. Edit deliberately.
-require("production_migration")
+require("runtime_capabilities")
 ALLOW_CLOUD_CONNECTION = False
 assert ALLOW_CLOUD_CONNECTION, "cloud gate closed"
 verdict("cloud_gate", "PASS", "operator opened the cloud gate")"""
@@ -626,12 +702,15 @@ mark("server_safe_stop", report=rep, **gpu_query())
 rmark("final", verdict="PASS" if rep.get("action") == "package_stop" else "FAIL", note=str(rep.get("action")))
 verdict("server_shutdown", "PASS" if rep.get("action") == "package_stop" and rep.get("report", {}).get("group_gone") else "FAIL", f"{rep}")"""
     return [
-        header("03. Enigma + Stokastisk build 5 integration (AWS-backed Enigma)", "**Prepared, not GPU-verified.** Requires BOTH Kaggle Secrets, each "
-               "validated independently before anything expensive; then a durable AWS acknowledgement; then EVIDENCE (not a checkbox) that Enigma "
-               "production runs on DynamoDB + Cognito. Only then: immutable build 5, the reviewed connector in its own supervised subprocess, explicit "
-               "intervals, a REQUIRED durable AWS marker before every stage. Stages stop at the first failure: offline NVML, offline vLLM metrics, "
-               "registration, heartbeat, idle job polling, single telemetry upload, continuous telemetry, full connector with one real Playground job "
-               f"(required), then build-5-safe shutdown.\n\n{SECRETS_MD}", n),
+        header("03. Enigma + Stokastisk build 5 integration (selectable runtime transport)", "**Prepared, not GPU-verified.** `RUNTIME_TRANSPORT` "
+               "(first code cell, fixed for the attempt): `railway` = the Railway FastAPI (today's verified production: Neon PostgreSQL + Neon Auth) or "
+               "`aws` = the optional AWS runtime endpoint (the same FastAPI app on Lambda; accepted only once it reports the production deployment). "
+               "Requires BOTH Kaggle Secrets, each validated independently before anything expensive; then a durable AWS diagnostic acknowledgement; "
+               "then capability EVIDENCE from the selected endpoint only (never a checkbox, never the other endpoint). Only then: immutable build 5, "
+               "real local Qwen inference, the reviewed connector in its own supervised subprocess, explicit intervals, a REQUIRED durable AWS marker "
+               "before every stage: offline NVML, offline vLLM metrics, registration, heartbeat, idle job polling, single telemetry upload, continuous "
+               "telemetry, full connector with one real Playground job "
+f"(required), then build-5-safe shutdown.\n\n{SECRETS_MD}", n),
         prelude(n),
         code(GPU_HELPERS),
         code(sub(REMOTE, DIAG=DIAG_URL)),
@@ -644,13 +723,13 @@ verdict("server_shutdown", "PASS" if rep.get("action") == "package_stop" and rep
         code(gate),
         code(prod_gate),
         md("## 03a. Immutable build 5, server, local inference"),
-        code('require("production_migration")\nrcheck("remote_install_begin", "install_begin", stage="install", phase="before")\n'
+        code('require("runtime_capabilities")\nrcheck("remote_install_begin", "install_begin", stage="install", phase="before")\n'
              + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SIZE=str(WHEEL_SIZE), KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
         code(sub(SERVER, MODEL=MODEL)),
         code(LOCAL_INFERENCE),
         md("## 03b. Reviewed connector, runtime credential getter, stage helper"),
         code(sub(CONNECTOR_FETCH, REV=ENIGMA_REV)),
-        code(sub(TOKEN_GETTER, API=API_URL)),
+        code(TOKEN_GETTER),
         code(helper),
         md("## 03c. Offline stages"),
         code('_ = stage("nvml", duration=120)'),

@@ -51,23 +51,35 @@ def test_gpu_notebooks_verify_the_exact_published_build5_bytes_before_installing
     assert "pre_rc, pre_conflicts = pip_check()" in text and "and not new_conflicts)" in text                   # install PASS requires no NEW conflict
 
 
-def test_notebook_01_is_stdlib_only_and_orders_idle_controls_aws_railway():
+def test_notebook_01_is_stdlib_only_and_orders_idle_controls_aws_target():
     text = "\n".join(code(N1))
     assert "REQUIRE_NO_INPUTS = True" in code(N1)[0]
-    assert not re.search(r"^\s*(import|from)\s+(torch|pynvml|vllm|stokastisk|triton|enigma_connector)\b", text, re.M)
-    assert '"-m", "pip"' not in text and '"git",' not in text                                       # no installs, no clone
-    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "token_getter" not in text and not re.search(r"^\s*(import|from)\s+boto3", text, re.M) and "AWS_SECRET" not in text
+    assert not re.search(r"^\s*(import|from)\s+(torch|pynvml|vllm|stokastisk|triton|enigma_connector|docker|kubernetes)\b", text, re.M)
+    assert '"-m", "pip"' not in text and '"git",' not in text and "kubectl" not in text and "docker " not in text.lower()
+    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' not in text and "token_getter" not in text and not re.search(r"^\s*(import|from)\s+boto3", text, re.M)
     order = [text.index(k) for k in ('observe("idle_10min", 600', 'get("pypi"', 'observe("controls_survival_120s"', 'check_credential("ENIGMA_DIAG_KEY"',
-                                     'rmark("aws_first_event"', "dup = resubmit_last()", 'observe("aws_survival_120s"', 'rcheck("railway_marker", "before_railway"',
-                                     "/api/v1/health", 'rmark("after_railway"', 'observe("railway_survival_120s"', 'verdict("overall", "PASS"')]
+                                     'rmark("aws_first_event"', "dup = resubmit_last()", 'observe("aws_survival", 600', 'rcheck("target_marker", "before_target"',
+                                     'rmark("after_target"', 'observe("post_target_passive_60s"', 'observe("post_target_active_60s"', 'verdict("overall", "PASS"')]
     assert order == sorted(order)
-    # no secret is read before (or during) the offline idle baseline: the shared cell only DEFINES functions
     cells = code(N1)
     idle = next(i for i, c in enumerate(cells) if 'observe("idle_10min"' in c)
     assert not any(re.search(r"^(check_credential|get_credential|rmark|rcheck)\(", c, re.M) for c in cells[:idle + 1])
-    # the credential preflight cell is re-runnable on its own: it refreshes only the credential cache
     pre = next(c for c in cells if 'check_credential("ENIGMA_DIAG_KEY"' in c)
     assert 'refresh_credentials("ENIGMA_DIAG_KEY")' in pre and "observe(" not in pre and "ATTEMPT =" not in pre
+
+
+def test_notebook_01_defaults_to_the_aws_only_experiment_and_never_contacts_railway_in_it():
+    assert 'EXPERIMENT_ID = "A"' in code(N1)[0]
+    target = next(c for c in code(N1) if "TARGETS = {" in c)
+    # In A the target cell returns before any request; the Railway URL is only reachable from the B / D branches.
+    a = target.index('if EXPERIMENT_ID == "A":')
+    assert a < target.index("rcheck(") < target.index("urlopen(req", a) and a < target.index("subprocess.Popen(")     # CHILD source is only a string above
+    assert 'observe("aws_survival", 600, every=15, remote_at=tuple(range(60, 601, 60)), durable_begin=True)' in "\n".join(code(N1))
+    post = next(c for c in code(N1) if "post_target_passive_60s" in c)
+    assert 'observe("post_target_passive_60s", 60, every=2, dense_first_s=60, dense_every=2)' in post            # passive: no remote_at
+    assert "remote_at=(5, 15, 30, 60)" in post
+    assert gen.AWS_RUNTIME_URL in target and "child_pid=child.pid" in target and "child.kill()" in target
+    assert 'subprocess.Popen([sys.executable, "-I", "-c", CHILD, url]' in target
 
 
 def test_notebook_02_never_contacts_enigma():
@@ -88,13 +100,22 @@ def test_notebook_03_is_gated_supervised_ordered_and_requires_a_real_job():
     assert '(stats.get("jobs_done") or 0) >= 1' in text and "run_stage(" in text and "serverctl.safe_stop(server)" in text
     assert '"--gpu-interval", "1.0", "--vllm-interval", "2.0", "--upload-interval", "5.0"' in text
     assert gen.ENIGMA_REV in text
-    # both credentials validated independently, durable AWS ack, then EVIDENCE of the cutover (not a boolean), all before the wheel download
     order = [text.index(k) for k in ('check_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")', 'check_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")',
-                                     "dup = resubmit_last()", 'verdict("production_migration"', "urllib.request.urlopen(WHEEL_URL")]
+                                     "dup = resubmit_last()", 'verdict("runtime_capabilities"', "urllib.request.urlopen(WHEEL_URL")]
     assert order == sorted(order)
-    assert 'store == "dynamodb" and auth == "cognito"' in text and "MIGRATION_COMPLETE" not in text
-    assert 'rcheck(f"stage_{name}_marker"' in text                                                  # a failed before-stage marker stops the stage
-    assert 'get_credential("ENIGMA_RUNTIME_TOKEN")' in text
+    assert 'rcheck(f"stage_{name}_marker"' in text and 'get_credential("ENIGMA_RUNTIME_TOKEN")' in text
+
+
+def test_notebook_03_transport_is_fixed_and_only_the_selected_endpoint_is_probed():
+    assert 'RUNTIME_TRANSPORT = "railway"' in code(N3)[0]
+    gate = next(c for c in code(N3) if 'verdict("runtime_capabilities"' in c)
+    assert 'API_URL = ENDPOINTS[RUNTIME_TRANSPORT]' in gate and 'API_URL + "/api/v1/health"' in gate and gate.count("urlopen(") == 1
+    assert 'deployment == "production"' in gate and 'store == "dynamodb" and auth == "cognito"' in gate       # aws only once it IS production
+    assert gen.API_URL in gate and gen.AWS_RUNTIME_URL in gate
+    text = "\n".join(code(N3))
+    assert 'assert API_URL == ENDPOINTS[RUNTIME_TRANSPORT], "transport changed mid-attempt"' in text
+    assert "api_url=API_URL if cloud" in text                                                                  # every stage uses the ONE selected URL
+    assert "fallback" not in text.lower().replace("never falls back", "").replace("fallen back", "")
 
 
 @pytest.mark.parametrize("name", [N1, N2, N3])

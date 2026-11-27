@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # principal); they are never Settings fields, never logged, never returned.
     ddb_table: str = ""                              # env ENIGMA_DDB_TABLE (prefix-derived)
     # User plane: "cognito" (Amazon Cognito user pool, RS256) or "neon" (Neon Managed Better Auth, EdDSA; kept only as the rollback path).
+    deployment: str = ""                          # env ENIGMA_DEPLOYMENT: public label of THIS deployment's data plane, e.g. "aws-staging-isolated"
     auth_provider: str = "neon"
     cognito_region: str = Field(default="", validation_alias="COGNITO_REGION")
     cognito_user_pool_id: str = Field(default="", validation_alias="COGNITO_USER_POOL_ID")
@@ -67,6 +68,11 @@ class Settings(BaseSettings):
     @property
     def cognito_jwks_url(self) -> str:
         return self.cognito_issuer + "/.well-known/jwks.json" if self.cognito_issuer else ""
+
+    @property
+    def deployment_label(self) -> str:
+        """What /api/v1/health reports. "production" only for the authoritative production deployment; anything else must say what it is."""
+        return self.deployment or ("production" if self.is_production else self.env)
 
     @property
     def is_production(self) -> bool:

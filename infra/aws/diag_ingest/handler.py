@@ -43,6 +43,7 @@ FIELDS: dict[str, tuple[str, int | None]] = {
     "verdict": _STR(16), "note": _STR(300), "oom_kill": _INT, "mem_available_mib": _NUM, "cgroup_current_mib": _NUM, "cgroup_max_mib": _NUM,
     "vm_uptime_s": _NUM, "gpu_count": _INT, "gpu_mem_used_mib": ("numlist", 8), "gpu_util_pct": ("numlist", 8), "wheel_build": _STR(8),
     "wheel_sha256": _STR(64), "artifact": _STR(120), "pid": _INT, "pgid": _INT, "sid": _INT, "experiment": _STR(80),
+    "transport": _STR(24), "offset_s": _NUM, "child_pid": _INT, "child_exit": _INT, "outcome": _STR(40), "oom_state": _STR(16),
 }
 REQUIRED = ("attempt", "nb", "seq", "marker", "utc")
 
