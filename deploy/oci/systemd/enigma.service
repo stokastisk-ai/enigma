@@ -1,0 +1,16 @@
+[Unit]
+Description=Enigma stack (docker compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/enigma/src/deploy/oci
+ExecStart=/usr/bin/docker compose --env-file /opt/enigma/secrets/compose.env up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file /opt/enigma/secrets/compose.env stop
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

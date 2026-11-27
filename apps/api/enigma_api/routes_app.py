@@ -351,7 +351,12 @@ def _require_cron_secret(request: Request, authorization: str | None) -> None:
 @admin.get("/prune")
 def prune(request: Request, authorization: str | None = Header(default=None)):
     _require_cron_secret(request, authorization)
-    return state(request).store.prune()
+    out = state(request).store.prune()
+    diag = getattr(request.app.state, "diag", None)
+    if diag is not None:
+        from datetime import datetime, timezone
+        out = {**(out or {}), "diag_events": diag.prune(datetime.now(timezone.utc))}
+    return out
 
 
 @admin.get("/ready")

@@ -1,0 +1,139 @@
+# Enigma on one OCI Always Free VM.Standard.A1.Flex (2 OCPU / 12 GB, linux/arm64). Docker Compose v2.
+# Only `caddy` publishes ports (80 for ACME http-01 + redirect, 443 TLS). PostgreSQL, uvicorn and Next.js are reachable on the private networks only.
+# `backend` is internal (no egress at all): the database cannot reach the internet. Secrets live in /opt/enigma/secrets/*.env (0600, root-owned),
+# never in this file. Images are built ON the ARM VM (no emulated builds); third-party images are pinned by digest.
+#
+#   cd /opt/enigma/src/deploy/oci
+#   docker compose --env-file /opt/enigma/secrets/compose.env build
+#   docker compose --env-file /opt/enigma/secrets/compose.env --profile ops run --rm migrate      # schema + least-privilege roles (idempotent)
+#   docker compose --env-file /opt/enigma/secrets/compose.env up -d
+name: enigma
+
+x-defaults: &defaults
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 20s
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: local
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  db:
+    <<: *defaults
+    image: postgres:18.7-bookworm@sha256:e742a2668255221388004f3a42b6150a2103f5054ab3a4a93ae9e4f01e551c35
+    env_file: ${ENIGMA_SECRETS:-/opt/enigma/secrets}/db.env                 # POSTGRES_PASSWORD (superuser; used only by migrate/backup over the private network)
+    environment:
+      POSTGRES_DB: enigma
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+    command: ["postgres", "-c", "shared_buffers=512MB", "-c", "max_connections=60", "-c", "password_encryption=scram-sha-256",
+              "-c", "log_min_duration_statement=2000", "-c", "idle_in_transaction_session_timeout=60s", "-c", "statement_timeout=30s",
+              "-c", "ssl=on", "-c", "ssl_cert_file=/run/pg-tls/server.crt", "-c", "ssl_key_file=/run/pg-tls/server.key", "-c", "ssl_min_protocol_version=TLSv1.3"]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ${ENIGMA_SECRETS:-/opt/enigma/secrets}/pg-tls:/run/pg-tls:ro           # created by db-tls.sh (local CA; server cert for host "db")
+    shm_size: 256m
+    mem_limit: 2g
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d enigma -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  migrate:                                               # one-shot, on demand only (profile ops)
+    profiles: ["ops"]
+    build: { context: ../.., dockerfile: apps/api/Dockerfile, args: { API_REQUIREMENTS: requirements-oci.txt } }
+    image: enigma-api:local
+    env_file: ${ENIGMA_SECRETS:-/opt/enigma/secrets}/migrate.env            # ENIGMA_DB_ADMIN_DSN, ENIGMA_DB_APP_PASSWORD, ENIGMA_DB_AUTH_PASSWORD
+    command: ["python", "-m", "enigma_api.bootstrap"]
+    volumes:
+      - ${ENIGMA_SECRETS:-/opt/enigma/secrets}/pg-tls/ca.crt:/run/pg-ca/ca.crt:ro
+    depends_on: { db: { condition: service_healthy } }
+    networks: [backend]
+    restart: "no"
+
+  ops:                                                   # one-shot operator toolbox (profile ops): Neon import, restore drills
+    profiles: ["ops"]
+    build: { context: ., dockerfile: ops.Dockerfile }
+    image: enigma-ops:local
+    volumes:
+      - ../../scripts/oci_import.py:/work/oci_import.py:ro
+      - ../../scripts/diag_keys.py:/work/diag_keys.py:ro
+      - ../../db/migrations:/db/migrations:ro
+      - ${ENIGMA_SECRETS:-/opt/enigma/secrets}/pg-tls/ca.crt:/run/pg-ca/ca.crt:ro
+      - ${ENIGMA_IMPORT_DIR:-/opt/enigma/import}:/import                   # dump + manifest + admin DSN file (0600); report written here
+    networks: [backend]
+    restart: "no"
+
+  api:
+    <<: *defaults
+    build: { context: ../.., dockerfile: apps/api/Dockerfile, args: { API_REQUIREMENTS: requirements-oci.txt } }
+    image: enigma-api:local
+    env_file: ${ENIGMA_SECRETS:-/opt/enigma/secrets}/api.env                # see api.env.example (names only)
+    environment:
+      ENIGMA_ENV: production
+      ENIGMA_STORE: postgres
+      ENIGMA_AUTH_PROVIDER: betterauth
+      ENIGMA_AUTH_JWKS_URL: http://web:3000/api/auth/jwks
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    volumes:
+      - ${ENIGMA_SECRETS:-/opt/enigma/secrets}/pg-tls/ca.crt:/run/pg-ca/ca.crt:ro
+    mem_limit: 768m
+    cpus: 1.0
+    depends_on: { db: { condition: service_healthy } }
+    networks: [backend, edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    <<: *defaults
+    build: { context: ../.., dockerfile: apps/web/Dockerfile }
+    image: enigma-web:local
+    env_file: ${ENIGMA_SECRETS:-/opt/enigma/secrets}/web.env                # see web.env.example (names only)
+    environment:
+      ENIGMA_AUTH: "on"
+      ENIGMA_API_URL: http://api:8000
+      ENIGMA_PUBLIC_SIGNUP: "off"                         # private beta until a trusted mail sender is verified
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    volumes:
+      - ${ENIGMA_SECRETS:-/opt/enigma/secrets}/pg-tls/ca.crt:/run/pg-ca/ca.crt:ro
+    mem_limit: 1g
+    cpus: 1.0
+    depends_on: { db: { condition: service_healthy } }
+    networks: [backend, edge]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/sign-in').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    <<: *defaults
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    environment:
+      ENIGMA_HOST: ${ENIGMA_HOST:?set ENIGMA_HOST in compose.env, e.g. <a-b-c-d>.sslip.io}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 256m
+    depends_on: [web, api]
+    networks: [edge]
+
+networks:
+  backend: { internal: true }
+  edge: {}
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}

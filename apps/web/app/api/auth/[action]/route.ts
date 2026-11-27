@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sameOrigin } from "@/lib/server/origin";
 import * as classify from "@/lib/server/auth-errors";
-import { cacheClearAll, getAuth, authEnabled, requireVerified, toSdkError, type SdkError } from "@/lib/server/auth-server";
+import { cacheClearAll, getAuth, authEnabled, publicSignupOpen, requireVerified, toSdkError, type SdkError } from "@/lib/server/auth-server";
 import { mailConfigured } from "@/lib/server/mailer";
 import { passwordProblem } from "@/lib/server/password-policy";
 import { clientIp, hit, reset } from "@/lib/server/rate-limit";
@@ -101,6 +101,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         return withCookies(json(200, { ok: true }), r.cookies);
       }
       case "sign-up": {
+        // Private beta: no self-service accounts until a trusted mail sender exists. Same answer for every address (no enumeration).
+        if (!publicSignupOpen()) return fail(403, "signup_closed", "Enigma is in private beta. Sign-up is closed; existing accounts can sign in.");
         const problem = passwordProblem(b.email, b.password);
         if (problem) return fail(422, "weak_password", problem);
         // No working mail transport = no way to deliver the verification code: refuse up front instead of creating an account nobody can verify.

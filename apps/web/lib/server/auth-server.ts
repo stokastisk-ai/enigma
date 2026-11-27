@@ -40,6 +40,9 @@ export function authConfig(env: Record<string, string | undefined> = process.env
 
 export const authEnabled = () => authConfig() !== null;
 
+/** Private beta: public self-service sign-up is OFF unless ENIGMA_PUBLIC_SIGNUP=on (only enable once a trusted mail sender is verified). */
+export const publicSignupOpen = (env: Record<string, string | undefined> = process.env) => env.ENIGMA_PUBLIC_SIGNUP === "on";
+
 /** Names of Better Auth's session cookies with Enigma's prefix (`__Secure-` over HTTPS). Presence only: this is NOT a validity check. */
 export const hasAuthCookie = (names: Iterable<string>): boolean => {
   for (const n of names) if (/^(__Secure-)?enigma-auth\./.test(n)) return true;

@@ -2,6 +2,7 @@
 *
 !apps/api/requirements.txt
 !apps/api/requirements-railway.txt
+!apps/api/requirements-oci.txt
 !apps/api/enigma_api/
 !db/migrations/
 **/__pycache__

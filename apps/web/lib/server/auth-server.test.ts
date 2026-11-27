@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { authConfig, cacheClearForTests, cacheGet, cachePut, hasAuthCookie, requireVerified, sessionKey, toSdkError } from "./auth-server.ts";
+import { authConfig, publicSignupOpen, cacheClearForTests, cacheGet, cachePut, hasAuthCookie, requireVerified, sessionKey, toSdkError } from "./auth-server.ts";
 
 const DSN = "postgresql://enigma_web_auth@db:5432/enigma";
 const OK = { ENIGMA_AUTH: "on", ENIGMA_PUBLIC_ORIGIN: "https://enigma.example.test/", BETTER_AUTH_SECRET: "s".repeat(32), ENIGMA_AUTH_DB_DSN: DSN };
@@ -70,4 +70,10 @@ test("isUpstreamFailure separates a not-ready auth database from a real 'no sess
   assert.equal(isUpstreamFailure({ status: 500 }), true);
   assert.equal(isUpstreamFailure({ status: 503 }), true);
   assert.equal(isUpstreamFailure({ message: "fetch failed" }), true, "no HTTP status means the call never completed");
+});
+
+test("public sign-up is closed unless explicitly opened (private beta)", () => {
+  assert.equal(publicSignupOpen({}), false);
+  assert.equal(publicSignupOpen({ ENIGMA_PUBLIC_SIGNUP: "true" }), false);
+  assert.equal(publicSignupOpen({ ENIGMA_PUBLIC_SIGNUP: "on" }), true);
 });

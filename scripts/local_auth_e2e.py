@@ -104,7 +104,8 @@ def main() -> int:
                                        "--no-access-log"], env=api_env, stdout=open(tmp / "api.log", "w"), stderr=subprocess.STDOUT))
         web_env = dict(os.environ, ENIGMA_AUTH="on", ENIGMA_PUBLIC_ORIGIN=origin, ENIGMA_PUBLIC_HOST=f"localhost:{web_port}", BETTER_AUTH_SECRET=secrets.token_urlsafe(48),
                        ENIGMA_AUTH_DB_DSN=auth_dsn, ENIGMA_SMTP_URL=f"smtp://e2e:e2e@localhost:{smtp_port}", ENIGMA_MAIL_FROM="enigma@localhost",
-                       NODE_EXTRA_CA_CERTS=str(tmp / "c.pem"), ENIGMA_API_URL=f"http://127.0.0.1:{api_port}", ENIGMA_DEV_AUTH="", NODE_ENV="production")
+                       NODE_EXTRA_CA_CERTS=str(tmp / "c.pem"), ENIGMA_API_URL=f"http://127.0.0.1:{api_port}", ENIGMA_DEV_AUTH="", NODE_ENV="production",
+                       ENIGMA_PUBLIC_SIGNUP="on")      # this harness creates accounts; the production default is closed (private beta)
         procs.append(subprocess.Popen(["npx", "next", "start", "-p", str(web_port), "-H", "127.0.0.1"], cwd=WEB, env=web_env,
                                       stdout=open(tmp / "web.log", "w"), stderr=subprocess.STDOUT))
         wait(lambda: httpx.get(f"http://127.0.0.1:{api_port}/api/v1/health", timeout=2).status_code == 200, "api")
