@@ -39,3 +39,13 @@ test-results/
 # private AWS discovery metadata
 /.enigma-local/
 .neon
+
+# private operating material (owner-approved removal from the public tree 2026-11-28; private copies live outside the repo)
+/skills.md
+/CLAUDE.md
+/skills-lock.json
+/.claude/
+/docs/ENIGMA_*.md
+/docs/RAILWAY_*.md
+/docs/*_PRIVATE.md
+/docs/OCI_DEPLOYMENT_REPORT.md
