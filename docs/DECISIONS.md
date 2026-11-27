@@ -11,3 +11,11 @@
 9. **`shadcn` CLI is a devDependency** (its minimatch advisory chain is build-time tooling); production deps audit clean.
 10. **Grafana (AGPL-3.0-only) is inspiration only**: left nav, global time range, per-panel error/empty states, table-view drill-down. No code copied.
 11. Dev auth exists solely for local E2E and is blocked in production and on Railway.
+
+## 2026-11-27 — OCI Always Free target
+- Hosting moves to one OCI Always Free A1 VM (Docker Compose). Reason: zero-cost long-running hosting; Railway/Neon/AWS are retired only after acceptance.
+- Store: self-hosted PostgreSQL 18 (owner-approved). OCI's Always Free NoSQL is not offered in the tenancy's home region (Ashburn); the existing
+  PostgreSQL store, SQL job functions and contracts are kept unchanged instead of a NoSQL rewrite.
+- Auth: self-hosted Better Auth (the library Neon's managed service wraps), so existing users, UUIDs and password hashes migrate without a reset.
+  Identities are re-keyed `neon:<uuid>` -> `ba:<uuid>` by the importer, transactionally and with verification.
+- Diagnostics: the AWS Lambda is replaced by an API route with the identical contract (shared VM failure domain acknowledged).

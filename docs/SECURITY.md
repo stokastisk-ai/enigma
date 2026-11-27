@@ -16,3 +16,12 @@
 Dev auth (HS256) is accepted only when `ENIGMA_DEV_AUTH` is on, never on Railway or with `ENIGMA_ENV=production`, and the UI shows a banner. Algorithm confusion is blocked (`alg=none`, HS256-with-public-key rejected).
 
 Known gaps: rate limits are per warm instance; credential `last_used_at` is updated per request; RLS/Realtime/Clerk JWKS have not been exercised against live services (see TEST_REPORT).
+
+## OCI target (migration branch)
+- Self-hosted Better Auth: scrypt password hashes, httpOnly SameSite=Lax session cookies (`__Secure-` over HTTPS), 6-digit e-mail codes (10 min, 5
+  attempts), Ed25519 JWT signing keys encrypted at rest with `BETTER_AUTH_SECRET`; the catch-all auth handler is not mounted. Enigma's own routes keep
+  the same-origin check, strict bodies, generic errors and per-address/per-account rate limits. Sign-up is closed by default (private beta).
+- Role separation in PostgreSQL: the web tier's auth role can only use schema `auth`; the API role cannot read it; the audit trail is append-only.
+- Edge: only Caddy listens publicly; tenant and admin API routes return 404 there; the database has no network egress and requires TLS 1.3 with
+  hostname verification even inside the VM.
+- Diagnostics (`/api/v1/diag/events`): separate `edx_` keys (hashed, quota, expiry, revocation), field whitelist, credential-shaped strings refused.
