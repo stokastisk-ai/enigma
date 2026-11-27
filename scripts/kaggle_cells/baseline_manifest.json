@@ -1,0 +1,181 @@
+{
+ "acceptance": {
+  "BUILD5_DEPENDENCY_CONFLICTS_INTRODUCED": 0,
+  "BUILD5_LOCAL_GPU_INFERENCE": "PASS",
+  "BUILD5_SAFE_SHUTDOWN": "PASS",
+  "BUILD5_SERVER_600S_STABILITY": "PASS",
+  "BUILD5_WHEEL_SHA256": "VERIFIED",
+  "NOTEBOOK_01_AWS_ONLY_BASELINE": "PASS"
+ },
+ "generated_utc": "2026-11-27T01:24:44Z",
+ "kind": "historical baseline acceptance (NOT current-session readiness)",
+ "manifest_sha256": "51a8671dfd0dfa240a747ff0b0ef3b9403871f81cc20d0ab4182430504a3e388",
+ "nb01": {
+  "attempt": "20261127T001031Z-29f49dac",
+  "aws_survival": "observed 600/600s, oom_kill delta 0, remote 10/10 acknowledged, problems []",
+  "executed_code_cells": 14,
+  "experiment": "no-sdk-expA",
+  "first_utc": "2026-11-27T00:10:31Z",
+  "gpu_device": false,
+  "inputs": [],
+  "last_utc": "2026-11-27T00:37:36Z",
+  "mode": "aws-required",
+  "oom_kill_max": 0,
+  "peak_cgroup_mib": 1157.9,
+  "python": "3.13.18",
+  "railway_requests": 0,
+  "records": 247,
+  "transport": "none",
+  "verdicts": {
+   "aws_endpoint": "PASS",
+   "aws_survival": "PASS",
+   "controls_https": "PASS",
+   "controls_survival_120s": "PASS",
+   "diag_key_preflight": "PASS",
+   "idle_10min": "PASS",
+   "overall": "PASS"
+  }
+ },
+ "nb02": {
+  "attempt": "20261127T004108Z-4acaca8a",
+  "aws_requests": 0,
+  "executed_code_cells": 13,
+  "experiment": "build5-standalone",
+  "first_utc": "2026-11-27T00:41:08Z",
+  "gpus": [
+   "Tesla T4",
+   "Tesla T4"
+  ],
+  "install": {
+   "conflicts_after": 8,
+   "first_plan_stopped_for_acknowledgement": true,
+   "installed_build": "5",
+   "introduced_conflicts": [],
+   "preexisting_conflicts": 8,
+   "replaced": {
+    "pydantic-settings": [
+     "2.16.3",
+     "2.16.2"
+    ]
+   }
+  },
+  "last_utc": "2026-11-27T01:02:14Z",
+  "local_inference": "32 chunks, generated-token counter +33.0",
+  "mode": "standalone",
+  "model_config": {
+   "attention": "TRITON_ATTN",
+   "dtype": "float16",
+   "enforce_eager": "True",
+   "gpu_memory_utilization": 0.6,
+   "gpu_memory_utilization_source": "notebook 02 server cell (StokastiskConfig gpu_memory_utilization=0.60)",
+   "max_seq_len": "2048",
+   "model": "Qwen/Qwen2.5-0.5B-Instruct",
+   "pipeline_parallel_size": "1",
+   "tensor_parallel_size": "1"
+  },
+  "observation": {
+   "observed_s": 600.1,
+   "oom_kill_delta": 0,
+   "ticks": 40
+  },
+  "oom_kill_max": 0,
+  "peak_cgroup_mib": 8046.3,
+  "python": "3.13.16",
+  "railway_requests": 0,
+  "records": 161,
+  "server_log_notes": {
+   "leaked_semaphore_warning": true,
+   "process_manager_force_killed_remaining": true,
+   "runtime_triton_jit_warnings": 2
+  },
+  "shutdown": {
+   "children_survived_leader": false,
+   "exit_code": 0,
+   "graceful": true,
+   "group_gone": true,
+   "signals": [
+    "SIGINT"
+   ]
+  },
+  "transport": "none",
+  "verdicts": {
+   "environment": "PASS",
+   "install": "PASS",
+   "install_plan": "PASS",
+   "local_inference": "PASS",
+   "remote_ready": "PASS",
+   "server_passive_10min": "PASS",
+   "server_shutdown": "PASS",
+   "server_start": "PASS",
+   "wheel_verified": "PASS"
+  },
+  "versions": {
+   "torch": "2.11.0+cu130",
+   "transformers": "5.20.2",
+   "triton": "3.6.0"
+  },
+  "wheel": {
+   "file": "stokastisk-0.1.0-5-cp313-cp313-linux_x86_64.whl",
+   "name_version": [
+    "stokastisk",
+    "2.4"
+   ],
+   "native_libraries": [
+    "vllm/_C_stable_libtorch.abi3.so",
+    "vllm/_moe_C_stable_libtorch.abi3.so",
+    "vllm/_rust_tool_parser.abi3.so",
+    "vllm/cumem_allocator.abi3.so",
+    "vllm/fs_io_C.abi3.so",
+    "vllm/spinloop.abi3.so"
+   ],
+   "pins": [
+    "pydantic>=2.12.0",
+    "pydantic-settings==2.16.2"
+   ],
+   "sha256": "fe80d7c36fa78cf8a26feb1e00bb5f1f006ca45a027450353603976320ae0b3e",
+   "size": 38057515,
+   "tag": "cp313-cp313-linux_x86_64",
+   "wheel_build_tag": "5"
+  }
+ },
+ "nb03_previous": {
+  "attempt": "20261127T010840Z-8d84df3d",
+  "executed_code_cells": 8,
+  "outcome": "INTERRUPTED after runtime_capabilities (Railway transport); build 5 not installed",
+  "verdicts": {
+   "aws_endpoint": "PASS",
+   "baselines_confirmed": "PASS",
+   "diag_key_preflight": "PASS",
+   "runtime_capabilities": "PASS",
+   "runtime_token_preflight": "PASS"
+  }
+ },
+ "schema": 1,
+ "sources": {
+  "nb01_archive": {
+   "file": "01-enigma-kaggle-platform-aws-diagnostics-enigma-diag-attempts.zip",
+   "sha256": "9e21adee5e83a248bdd58e62286cc8dc6ca5f53e245641abcaeacef69d20e2f4",
+   "size": 19916
+  },
+  "nb01_notebook": {
+   "file": "01-enigma-kaggle-platform-aws-diagnostics.ipynb",
+   "sha256": "ca99a58c6f0a8bebb7c208237c84af0e13fc30499e2ec8eebe963d19890e5fd1",
+   "size": 279531
+  },
+  "nb02_archive": {
+   "file": "02-stokastisk-build5-kaggle-t4-validation-enigma-diag-attempts.zip",
+   "sha256": "fc24249ef5204f4b221b7c059cc44ed5b4ebe75810ceae2751dc1bb68d986358",
+   "size": 37083330
+  },
+  "nb02_notebook": {
+   "file": "02-stokastisk-build5-kaggle-t4-validation.ipynb",
+   "sha256": "8d4af7e70ccccf855b95fe36ba598b9b7d82141e8b74f6cdfe91736d93c73e76",
+   "size": 219804
+  },
+  "nb03_previous_notebook": {
+   "file": "03-enigma-stokastisk-build5-aws-integration.ipynb",
+   "sha256": "787762297e7b7be8063b7a5eef47861ab8f954c29560aead7a68ae3dad2da1cb",
+   "size": 79395
+  }
+ }
+}

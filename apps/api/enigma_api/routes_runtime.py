@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
 
-from .deps import AppState, lease_owner, runtime_identity, state
+from .deps import AppState, lease_owner, runtime_identity, runtime_status, state
 from .errors import ApiError
 from .models import (ClaimedJob, ClaimRequest, ClaimResponse, CompleteRequest, EventsRequest, EventsResponse, FailRequest, HeartbeatResponse, JobAck,
                      JobStatusRuntime, RegisterRequest, RegisterResponse, TelemetryBatch, TelemetryResponse)
@@ -48,6 +48,16 @@ def register(body: RegisterRequest, request: Request, ident: RuntimeIdentity = D
     st.store.audit(ident.workspace_id, f"runtime:{ident.runtime_id}", "runtime.register", "runtime", ident.runtime_id,
                    {"is_mock": ident.is_mock, "connector_version": body.connector_version})
     return RegisterResponse(runtime_id=ident.runtime_id, run_id=run_id)
+
+
+@router.get("/runtimes/me")
+def whoami(request: Request, ident: RuntimeIdentity = Depends(runtime_identity)):
+    """Read-only identity of the presented runtime credential (no side effect): lets a runtime verify, BEFORE any expensive work, that its token
+    is accepted by the selected endpoint and whether it was issued for a real or a mock runtime. Returns only ids the token holder already owns."""
+    st = state(request)
+    _limit(st, "whoami", ident.runtime_id, 1.0, 5)
+    rt = st.store.get_runtime(ident.runtime_id) or {}
+    return {"runtime_id": ident.runtime_id, "project_id": ident.project_id, "is_mock": ident.is_mock, "status": runtime_status(rt, st.clock())["status"]}
 
 
 @router.post("/runtimes/{runtime_id}/heartbeat", response_model=HeartbeatResponse)

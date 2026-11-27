@@ -18,6 +18,11 @@ ENIGMA_REV = "8648d91632b5bbf5ae174403a01578c04a5eff20"           # reviewed CON
 API_URL = "https://enigma-api-production-c8cffe9d.up.railway.app"
 DIAG_URL = "https://ygjtcfhrgkhyybl4gotvzmfa440zzlkh.lambda-url.us-east-1.on.aws/"     # independent AWS diagnostic ingestion (Lambda Function URL)
 AWS_RUNTIME_URL = "https://ifmsy4cngt3kd474oqayy6b5py0ufiht.lambda-url.us-east-1.on.aws"   # optional AWS runtime API (same FastAPI app on Lambda); ISOLATED staging data until the cutover
+AWS_RUNTIME_PROD_URL = ""           # the AWS PRODUCTION runtime endpoint: not deployed until the DynamoDB + Cognito cutover (empty = aws-production is BLOCKED)
+# Public, non-secret data-plane fingerprints (enigma_api.settings.Settings.data_plane) of each deployment's configured store, fixed here at generation time:
+DATA_PLANES = {"aws-staging": "9a507821bc94305b",          # dynamodb:enigma-rt-staging (isolated staging table)
+               "aws-production": "5bdb3004af425d7c",       # dynamodb:enigma-prod (the future authoritative production table)
+               "railway-comparison": "432c8dfc55388292"}   # postgres: the Neon production database Railway uses today (derived without exposing the DSN)
 WHEEL = "https://huggingface.co/waqasm86/stokastisk/resolve/main/wheels/stokastisk-0.1.0-5-cp313-cp313-linux_x86_64.whl"
 WHEEL_SHA256 = "fe80d7c36fa78cf8a26feb1e00bb5f1f006ca45a027450353603976320ae0b3e"
 WHEEL_SIZE = 38057515
@@ -308,6 +313,8 @@ CELLS = ROOT / "scripts" / "kaggle_cells"
 REMOTE = (CELLS / "diag_credentials.py").read_text()        # shared credential + transport cell (tests exec this exact text)
 EVIDENCE = (CELLS / "evidence.py").read_text()               # inlined into the prelude
 OBSERVE = (CELLS / "observe.py").read_text()                 # inlined into the prelude
+CAPABILITY = (CELLS / "capability.py").read_text()           # notebook 03 capability probe (tests exec this exact text)
+BASELINE = json.loads((CELLS / "baseline_manifest.json").read_text())    # derived by scripts/build_baseline_manifest.py from the executed evidence
 
 
 SAFE_STOP = r'''# Build-5-safe shutdown (no connector needed): build-5 ServerProcess.stop() is only safe while the server's leader process is unreaped. If the leader
@@ -384,8 +391,12 @@ MODE_LINES = {
         'EXPERIMENT_ID = "-"\nRUNTIME_TRANSPORT = "none"'),
     "03_enigma_stokastisk_build5_aws_integration": (
         'VALIDATION_MODE = "aws-required"\nEXPERIMENT_ID = "-"\n'
-        'RUNTIME_TRANSPORT = "railway"   # "railway" = the Railway FastAPI (verified production) | "aws" = the AWS runtime endpoint (only if it reports '
-        'the production deployment). Fixed for the attempt: never switched or fallen back mid-run.'),
+        'INTEGRATION_MODE = "aws-staging"     # "aws-staging" = AWS runtime endpoint on its ISOLATED staging table (default; staging acceptance only) | '
+        '"aws-production" = AWS runtime endpoint on production data (BLOCKED until the DynamoDB + Cognito cutover) | "railway-comparison" = Railway direct\n'
+        'ALLOW_RAILWAY_COMPARISON = False     # railway-comparison contacts Railway from Kaggle (associated with every fatal Kaggle session so far): '
+        'set True only deliberately\n'
+        'RUNTIME_TRANSPORT = {"aws-staging": "aws", "aws-production": "aws", "railway-comparison": "railway"}[INTEGRATION_MODE]   # derived; fixed for '
+        'the attempt, never switched, no fallback'),
 }
 
 
@@ -627,53 +638,150 @@ mark("server_log_tail", log_tail=server.log_tail(20))"""
     ]
 
 
-def nb_03() -> list[dict]:
-    n = "03_enigma_stokastisk_build5_aws_integration"
-    gate = r"""# Gate 1: run only after notebooks 01 and 02 PASSED in their own sessions. Edit deliberately.
-BASELINES_PASSED = False
-assert BASELINES_PASSED, "run notebooks 01 and 02 first"
-verdict("baselines_confirmed", "PASS", "operator confirmed 01 and 02 PASS")"""
-    prod_gate = sub(r"""# Gate 2: capability EVIDENCE from the SELECTED runtime endpoint only (no request to the other one; not an editable boolean). The public,
-# unauthenticated health endpoint reports store, auth and deployment (no credential is sent). Requirements:
-#   railway: the endpoint must report deployment "production" with a durable store (postgres or dynamodb) and a real auth provider (neon or cognito).
-#   aws:     the AWS runtime endpoint must report deployment "production" AND the same store/auth as production. It reports "aws-staging-isolated" until
-#            the DynamoDB + Cognito production cutover makes it share production's data; until then this gate stops here, before any GPU work.
-require("baselines_confirmed", "aws_endpoint", "runtime_token_preflight")
-import urllib.request, urllib.error
-ENDPOINTS = {"railway": "__API__", "aws": "__AWSRT__"}
-API_URL = ENDPOINTS[RUNTIME_TRANSPORT]                       # fixed for the attempt; the connector never falls back to the other transport
-assert "PENDING" not in API_URL, "the AWS runtime endpoint is not deployed; use RUNTIME_TRANSPORT = \"railway\""
-rcheck("capability_marker", "before_capability_probe", stage="capability", phase="before", target=RUNTIME_TRANSPORT)
-t = time.monotonic(); row, info = {}, {}
+NB03_ENV = r"""# 03-0. GPU environment guard (local only: nvidia-smi in a separate process, /proc, a loopback socket; no network, no CUDA in this kernel).
+# The same inventory approach as the verified notebook 02, plus SM75, free GPU memory, host memory and "no inference server already running".
+EXPERIMENT = f"build5-{INTEGRATION_MODE}"              # every later MARK names the integration mode
+assert INTEGRATION_MODE in ("aws-staging", "aws-production", "railway-comparison"), INTEGRATION_MODE
+import importlib.metadata as md, socket
+g = gpu_query()
+names = [x.get("name") for x in g.get("gpus", [])]
 try:
-    req = urllib.request.Request(API_URL + "/api/v1/health", headers={"User-Agent": "Enigma-Kaggle-Diagnostic/6.0", "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        row["http"] = r.status
-        info = json.loads(r.read(4096))
-except urllib.error.HTTPError as e:
-    row["http"] = e.code
+    _r = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap,memory.free", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=30)
+    caps = [tuple(x.strip() for x in l.split(",")) for l in _r.stdout.strip().splitlines()]
 except Exception as e:
-    row["exc"] = type(e).__name__
-row["latency_s"] = round(time.monotonic() - t, 3)
-info = info if isinstance(info, dict) else {}
-store, auth, deployment = info.get("store"), info.get("auth"), info.get("deployment")
-rmark("after_capability_probe", stage="capability", phase="after", target=RUNTIME_TRANSPORT, note=f"store={store} auth={auth} deployment={deployment}", **row)
-ok = row.get("http") == 200 and deployment == "production" and store in ("postgres", "dynamodb") and auth in ("neon", "cognito")
-if RUNTIME_TRANSPORT == "aws":
-    ok = ok and store == "dynamodb" and auth == "cognito"
+    caps = [("error:" + type(e).__name__, "0")]
+vers = {p: (md.version(p) if p in {d.metadata["Name"].lower() for d in md.distributions()} else None) for p in ("torch", "triton", "transformers")}
+EXPECTED_VERSIONS = {"torch": "2.11.0+cu130", "triton": "3.6.0", "transformers": "5.20.2"}
+_h = host()
+with socket.socket() as _s:
+    _s.settimeout(1.0)
+    port_busy = _s.connect_ex(("127.0.0.1", 8000)) == 0
+servers = []
+for _p in os.listdir("/proc"):
+    if _p.isdigit() and int(_p) != os.getpid():
+        _c = (_read(f"/proc/{_p}/cmdline") or "").replace("\x00", " ")
+        if "vllm" in _c and ("serve" in _c or "entrypoints" in _c):
+            servers.append(int(_p))
+checks = {"python_3_13": sys.version_info[:2] == (3, 13), "two_tesla_t4": names == ["Tesla T4", "Tesla T4"],
+          "sm75": [c[0] for c in caps] == ["7.5", "7.5"], "gpu_free_mib_ge_14000": all(c[1].isdigit() and int(c[1]) >= 14000 for c in caps) and len(caps) == 2,
+          "host_available_mib_ge_24000": (_h.get("memavailable_mib") or 0) >= 24000, "versions_as_validated": vers == EXPECTED_VERSIONS,
+          "no_local_server": not port_busy and not servers}
+mark("environment", integration_mode=INTEGRATION_MODE, python=platform.python_version(), gpus=names, compute_caps=caps, versions=vers, port_8000_busy=port_busy,
+     vllm_pids=servers, checks=checks, **g)
+bad = [k for k, v in checks.items() if not v]
+verdict("environment", "PASS" if not bad else "INCONCLUSIVE",
+        f"{names}, SM {[c[0] for c in caps]}, free MiB {[c[1] for c in caps]}, {vers}" + (f"; NOT as validated: {bad} (start a NEW GPU T4 x2 session; "
+        "a version difference means the historical baseline does not cover this image)" if bad else "; matches the validated notebook 02 environment"),
+        checks=checks)"""
+
+NB03_BASELINE = r"""# 03-2. HISTORICAL baseline evidence (not an operator checkbox): a small manifest derived by scripts/build_baseline_manifest.py from the owner's
+# executed notebook 01 / 02 runs and their diagnostic archives (hashes of the source files are inside). Its digest is re-verified here. This proves what
+# PASSED in those earlier sessions only; this session still verifies its own environment, the wheel bytes, the install and real local inference.
+require("environment")
+import hashlib
+BASELINE = json.loads(__BASELINE_JSON__)
+_core = {k: v for k, v in BASELINE.items() if k not in ("generated_utc", "manifest_sha256")}
+_digest = hashlib.sha256(json.dumps(_core, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+acc, b2 = BASELINE["acceptance"], BASELINE["nb02"]
+checks = {"manifest_digest": _digest == BASELINE["manifest_sha256"] == "__BASELINE_SHA__",
+          "nb01_expA_overall": acc["NOTEBOOK_01_AWS_ONLY_BASELINE"] == "PASS" and BASELINE["nb01"]["railway_requests"] == 0,
+          "nb02_local_inference": acc["BUILD5_LOCAL_GPU_INFERENCE"] == "PASS", "nb02_600s_stability": acc["BUILD5_SERVER_600S_STABILITY"] == "PASS",
+          "nb02_safe_shutdown": acc["BUILD5_SAFE_SHUTDOWN"] == "PASS", "no_conflict_introduced": acc["BUILD5_DEPENDENCY_CONFLICTS_INTRODUCED"] == 0,
+          "wheel_identity": (b2["wheel"]["sha256"], b2["wheel"]["size"], b2["wheel"]["wheel_build_tag"]) == ("__SHA__", __SIZE__, "5"),
+          "model_config": (b2["model_config"]["model"], b2["model_config"]["tensor_parallel_size"], b2["model_config"]["pipeline_parallel_size"],
+                           b2["model_config"]["dtype"], b2["model_config"]["attention"], b2["model_config"]["max_seq_len"]) == ("__MODEL__", "1", "1", "float16", "TRITON_ATTN", "2048"),
+          "environment_matches_baseline": b2["versions"] == vers and b2["gpus"] == names}
+mark("baseline_manifest", digest=_digest, attempts=[BASELINE["nb01"]["attempt"], b2["attempt"]], acceptance=acc, checks=checks)
+bad = [k for k, v in checks.items() if not v]
+verdict("baseline_manifest", "PASS" if not bad else "INCONCLUSIVE",
+        f"HISTORICAL: nb01 {BASELINE['nb01']['attempt']} expA PASS; nb02 {b2['attempt']} inference/600 s/shutdown PASS; wheel {b2['wheel']['sha256'][:16]}..."
+        + (f"; FAILED checks {bad}" if bad else "; current environment equals the validated one"), checks=checks)"""
+
+NB03_CAPABILITY = r"""# 03-3. Capability gate: EVIDENCE from the SELECTED runtime endpoint only (the other endpoints are never contacted). One public, unauthenticated
+# health probe (no credential), bracketed by REQUIRED durable AWS markers. aws-production is BLOCKED (no request at all) until the production AWS runtime
+# endpoint exists; railway-comparison needs ALLOW_RAILWAY_COMPARISON = True. HTTP 200 alone is never readiness: the schema, the deployment label, the
+# store, the auth provider and the data-plane fingerprint fixed at generation time must all match the selected mode.
+require("baseline_manifest", "aws_endpoint", "runtime_token_preflight")
+MODES = {"aws-staging": {"url": "__AWSRT__", "expect": {"deployment": "aws-staging-isolated", "store": "dynamodb", "auth": "cognito", "data_plane": "__DP_STAGING__"}},
+         "aws-production": {"url": "__AWSPROD__", "expect": {"deployment": "production", "store": "dynamodb", "auth": "cognito", "data_plane": "__DP_PROD__"}},
+         "railway-comparison": {"url": "__API__", "expect": {"deployment": "production", "store": "postgres", "auth": "neon", "data_plane": "__DP_RAILWAY__"}}}
+SCOPE = {"aws-staging": "STAGING", "aws-production": "PRODUCTION", "railway-comparison": "RAILWAY-COMPARISON"}[INTEGRATION_MODE]
+API_URL = MODES[INTEGRATION_MODE]["url"]                # fixed for the attempt; the connector is given only this URL and never falls back
+if INTEGRATION_MODE == "aws-production" and not API_URL:
+    verdict("runtime_capabilities", "INCONCLUSIVE", "BLOCKED: the AWS PRODUCTION runtime endpoint does not exist yet (production still runs on Railway + Neon; "
+            "the DynamoDB + Cognito cutover is pending). No request was sent and no GPU work runs. Use INTEGRATION_MODE = \"aws-staging\" for the isolated "
+            "staging integration; do not bypass this gate.", blocked=True)
+if INTEGRATION_MODE == "railway-comparison" and not ALLOW_RAILWAY_COMPARISON:
+    verdict("runtime_capabilities", "INCONCLUSIVE", "BLOCKED: railway-comparison contacts Railway from Kaggle; set ALLOW_RAILWAY_COMPARISON = True deliberately",
+            blocked=True)
+ALLOWED_HOST = urllib.parse.urlsplit(API_URL).hostname
+rcheck("capability_marker", "before_capability_probe", stage="capability", phase="before", target=RUNTIME_TRANSPORT, note=INTEGRATION_MODE)
+probe = probe_health(API_URL, ALLOWED_HOST, wall_timeout=20.0)
+body = probe["body"] if isinstance(probe["body"], dict) else {}
+sch = check_schema(probe["body"], 2) if probe["http"]["result"] == "PASS" else {"result": "FAIL", "why": "no HTTP 200"}
+dep = check_deployment(body, MODES[INTEGRATION_MODE]["expect"]) if sch["result"] == "PASS" else {"result": "FAIL", "why": "schema not valid"}
+after = rmark("after_capability_probe", stage="capability", phase="after", target=RUNTIME_TRANSPORT, http=probe["http"].get("status"),
+              latency_s=probe["latency_s"], note=f"{INTEGRATION_MODE} http={probe['http']['result']} schema={sch['result']} deployment={dep['result']}")
+CAP = {"CAPABILITY_HTTP_RESULT": probe["http"], "CAPABILITY_SCHEMA_RESULT": sch, "CAPABILITY_DEPLOYMENT_RESULT": dep,
+       "CAPABILITY_DURABLE_EVIDENCE_RESULT": {"result": "PASS" if after else "FAIL", "before": "acknowledged", "after": after.get("code")}}
+for k, v in CAP.items():
+    print(f"{k}: {v['result']} | {json.dumps({x: y for x, y in v.items() if x != 'result'})}", flush=True)
+ok = all(v["result"] == "PASS" for v in CAP.values())
 verdict("runtime_capabilities", "PASS" if ok else "INCONCLUSIVE",
-        f"{RUNTIME_TRANSPORT} endpoint reports store={store!r} auth={auth!r} deployment={deployment!r} (http {row.get('http')}); "
-        + ("verified production endpoint" if ok else "NOT the verified production data plane: no GPU or cloud stage runs"),
-        store=store, auth=auth, deployment=deployment)""", API=API_URL, AWSRT=AWS_RUNTIME_URL)
-    helper = r"""from enigma_connector.stage_runner import run_stage, MarkerLog
+        f"{SCOPE} via {RUNTIME_TRANSPORT}: " + ", ".join(f"{k.split('_')[1]}={v['result']}" for k, v in CAP.items())
+        + (f" | deployment={body.get('deployment')!r} store={body.get('store')!r} auth={body.get('auth')!r}" if body else "")
+        + ("" if ok else " | NOT the expected data plane: no GPU or cloud stage runs"), capability={k: v["result"] for k, v in CAP.items()}, scope=SCOPE,
+        deployment=body.get("deployment"), store=body.get("store"), auth=body.get("auth"), data_plane=body.get("data_plane"))"""
+
+NB03_IDENTITY = r"""# 03-4. Runtime credential: ACTUAL authentication against the selected endpoint, before any GPU work. One read-only, side-effect-free
+# GET /api/v1/runtimes/me (no registration, no job operation). Requires a REAL (non-mock) runtime. In aws-staging the secret ENIGMA_RUNTIME_TOKEN must
+# hold the STAGING runtime token (scripts/aws_staging_runtime.py provision); a production token is not known to the staging table and fails here (401).
+require("runtime_capabilities")
+rcheck("identity_marker", "before_runtime_identity", stage="identity", phase="before", target=RUNTIME_TRANSPORT)
+_tok, _res = get_credential("ENIGMA_RUNTIME_TOKEN")
+if _tok is None:
+    verdict("runtime_identity", "INCONCLUSIVE", f"ENIGMA_RUNTIME_TOKEN {_res['code']}: {_res['message']}")
+_req = urllib.request.Request(API_URL.rstrip("/") + "/api/v1/runtimes/me", headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json",
+                                                                                     "User-Agent": "Enigma-Kaggle-Capability/7.0"})
+del _tok
+who, st, t = {}, None, time.monotonic()
+try:
+    with _cap_opener().open(_req, timeout=20) as r:
+        st, who = r.status, json.loads(r.read(4096))
+except urllib.error.HTTPError as e:
+    st = e.code
+except Exception as e:
+    st = "exc:" + type(e).__name__
+del _req
+who = who if isinstance(who, dict) else {}
+after = rmark("after_runtime_identity", stage="identity", phase="after", http=st if isinstance(st, int) else None, latency_s=round(time.monotonic() - t, 3),
+              note=f"is_mock={who.get('is_mock')}")
+ok = st == 200 and who.get("is_mock") is False and bool(who.get("runtime_id")) and bool(after)
+hint = {401: "the token is not accepted by THIS endpoint (wrong token for the mode, revoked, or expired)",
+        404: "the endpoint does not serve /runtimes/me yet (API contract too old)"}.get(st, "")
+verdict("runtime_identity", "PASS" if ok else "INCONCLUSIVE",
+        f"http {st}; real runtime={who.get('is_mock') is False}; durable after-marker={bool(after)}" + (f" | {hint}" if hint and not ok else ""),
+        runtime_id=who.get("runtime_id"), is_mock=who.get("is_mock"))"""
+
+NB03_SURVIVAL = r"""# 03-5. Post-capability survival gate. Every fatal Kaggle session so far ended seconds after a Railway response; nothing is installed until this
+# session demonstrably survives its endpoint contact. Durable start marker -> 90 s PASSIVE window (local, fsynced, printed ticks every 2 s for 30 s,
+# then every 5 s; no network) -> durable completion marker. If the whole VM is terminated, only the markers already stored in AWS remain.
+require("runtime_identity")
+observe("post_capability_survival", 90, every=5, dense_first_s=30, dense_every=2, durable_begin=True)
+rcheck("post_capability_survival_marker", "post_capability_survival_complete", stage="survival", phase="after", verdict="PASS")"""
+
+NB03_HELPER = r"""from enigma_connector.stage_runner import run_stage, MarkerLog
 from enigma_connector import serverctl
 INTERVAL_ARGS = ("--gpu-interval", "1.0", "--vllm-interval", "2.0", "--upload-interval", "5.0")      # explicit finite intervals, as in every verified run
 ORDER = ("nvml", "vllm", "register", "heartbeat", "jobs", "upload-once", "telemetry", "full")
 
 
 def stage(name, **kw):
-    # One SUPERVISED connector subprocess per stage (never in this kernel). Prerequisites must have PASSED in THIS session.
-    require("connector_fetch", "local_inference", *[f"stage_{p}" for p in ORDER[:ORDER.index(name)]])
+    # One SUPERVISED connector subprocess per stage (never in this kernel). Prerequisites (result AND durable evidence) must have PASSED in THIS session.
+    prev = ORDER[:ORDER.index(name)]
+    require("connector_fetch", "local_inference", *[f"stage_{p}" for p in prev], *[f"stage_{p}_evidence" for p in prev])
+    if name not in ("nvml", "vllm"):
+        require("cloud_gate")
     assert server.health(), "local vLLM unhealthy"
     cloud = name not in ("nvml", "vllm")
     # The before-marker MUST be durable (a failed one stops here). Offline stages send nothing DURING their measured interval.
@@ -688,67 +796,141 @@ def stage(name, **kw):
         extra_ok, why = (stats.get("jobs_done") or 0) >= 1 and stats.get("jobs_failed") == 0, "at least one real Playground job must complete"
     failed = [c[0] for c in res["checks"] if not c[1]] + ([why] if not extra_ok else [])
     status = "PASS" if res["passed"] and extra_ok else "FAIL"
-    rmark(f"after_stage_{name}", stage=name, phase="after", exit_code=res["exit"]["returncode"], signal=res["exit"].get("killed_by_signal"), verdict=status)
+    # The stage RESULT is recorded first and independently: a failed stage stays failed even if its marker is stored ...
+    after = rmark(f"after_stage_{name}", stage=name, phase="after", exit_code=res["exit"]["returncode"], signal=res["exit"].get("killed_by_signal"), verdict=status)
     verdict(f"stage_{name}", status, f"rc={res['exit']['returncode']} failed={failed}", run_id=(res.get("summary") or {}).get("run_id"), stats=stats)
+    # ... and a passed stage whose required durable evidence is missing can never satisfy the acceptance gate.
+    verdict(f"stage_{name}_evidence", "PASS" if after else "INCONCLUSIVE", f"after-stage AWS marker {after.get('code')}")
     return res"""
-    cloud_gate = r"""# Gate 3: confirm in Enigma (AWS-backed production) that the runtime is REAL (Mock off) and that no Playground job is queued. Edit deliberately.
-require("runtime_capabilities")
-ALLOW_CLOUD_CONNECTION = False
-assert ALLOW_CLOUD_CONNECTION, "cloud gate closed"
-verdict("cloud_gate", "PASS", "operator opened the cloud gate")"""
-    shutdown = r"""# Shutdown with the build-5-safe orchestration from the reviewed connector (never patches the installed wheel).
+
+NB03_CLOUD_GATE = r"""# 03-7. Cloud gate (evidence, not a checkbox): the selected endpoint's capabilities and the REAL runtime identity were verified before any GPU work,
+# the session survived, and both offline stages passed with durable evidence. A queued Playground job would be claimed by the idle-polling stage and
+# fail it (it must stay idle): submit NOTHING before stage "full".
+require("runtime_capabilities", "runtime_identity", "post_capability_survival", "stage_nvml", "stage_nvml_evidence", "stage_vllm", "stage_vllm_evidence")
+assert API_URL == MODES[INTEGRATION_MODE]["url"], "transport changed mid-attempt"
+rcheck("cloud_gate_marker", "cloud_gate_open", stage="cloud_gate", phase="before", target=RUNTIME_TRANSPORT, note=SCOPE)
+verdict("cloud_gate", "PASS", f"{SCOPE} cloud stages enabled against {urllib.parse.urlsplit(API_URL).hostname} only")"""
+
+NB03_SHUTDOWN = r"""# 03-9. Shutdown with the build-5-safe orchestration from the reviewed connector (never patches the installed wheel).
 rep = serverctl.safe_stop(server)
 mark("server_safe_stop", report=rep, **gpu_query())
-rmark("final", verdict="PASS" if rep.get("action") == "package_stop" else "FAIL", note=str(rep.get("action")))
-verdict("server_shutdown", "PASS" if rep.get("action") == "package_stop" and rep.get("report", {}).get("group_gone") else "FAIL", f"{rep}")"""
+ok = rep.get("action") == "package_stop" and rep.get("report", {}).get("group_gone")
+rmark("shutdown_done", stage="shutdown", phase="after", verdict="PASS" if ok else "FAIL", note=str(rep.get("action")))
+verdict("server_shutdown", "PASS" if ok else "FAIL", f"{rep}")"""
+
+NB03_OVERALL = r"""# 03-10. OVERALL acceptance. Run it last, also after a stop (it reads this session's verdicts only). PASS needs EVERY step below, including safe
+# shutdown and a durable final AWS verdict. The scope is stated explicitly: STAGING acceptance is never production acceptance.
+REQUIRED = ["environment", "diag_key_preflight", "runtime_token_preflight", "aws_endpoint", "baseline_manifest", "runtime_capabilities", "runtime_identity",
+            "post_capability_survival", "wheel_verified", "install_plan", "install", "server_start", "local_inference", "connector_fetch", "cloud_gate",
+            *[f"stage_{s}{e}" for s in ("nvml", "vllm", "register", "heartbeat", "jobs", "upload-once", "telemetry", "full") for e in ("", "_evidence")],
+            "server_shutdown"]
+got = {s: RESULTS.get(s, {}).get("status", "NOT_RUN") if RESULTS.get(s, {}).get("attempt") in (ATTEMPT, None) else "STALE" for s in REQUIRED}
+if all(v == "PASS" for v in got.values()):
+    outcome = "PASS"
+elif RESULTS.get("runtime_capabilities", {}).get("blocked"):
+    outcome = "BLOCKED"
+elif any(v == "FAIL" for v in got.values()):
+    outcome = "FAIL"
+else:
+    outcome = "INCONCLUSIVE"
+fin = rmark("overall", stage="overall", verdict=outcome, note=f"{globals().get('SCOPE', INTEGRATION_MODE)}; missing={[k for k, v in got.items() if v != 'PASS'][:6]}")
+if outcome == "PASS" and not fin:
+    outcome = "INCONCLUSIVE"                          # the final remote verdict is required evidence
+scope = globals().get("SCOPE", INTEGRATION_MODE.upper())
+label = {"PASS": f"{scope} INTEGRATION ACCEPTED" + (" (isolated staging data; NOT production acceptance)" if scope == "STAGING" else "")}.get(outcome, outcome)
+RESULTS["overall"] = {"status": outcome, "reason": label, "attempt": ATTEMPT, "steps": got}
+mark("verdict", step="overall", status=outcome, reason=label, steps=got, final_remote=fin.get("code"))
+print(json.dumps(got, indent=1), flush=True)
+print(f"VERDICT overall: {outcome} | {label}", flush=True)
+if outcome != "PASS":
+    raise DiagnosticStop(f"overall {outcome}")"""
+
+NB03_EXPORT = r"""# Compact evidence export (run it even after a FAIL / INCONCLUSIVE / BLOCKED stop). ONE redacted archive directly in /kaggle/working (not inside the
+# attempt tree, so it is never nested in another archive): markers, verdicts, pip reports, server and stage logs. The public 38 MB wheel bytes and the
+# public connector clone are excluded (the wheel's size + SHA-256 and the connector's full SHA are in the markers). Download THIS file only; do not
+# zip /kaggle/working/enigma-diag-attempts.
+mark("export_begin", results={k: v["status"] for k, v in RESULTS.items()}, wheel_sha256="__SHA__", connector_rev="__REV__")
+archive = f"/kaggle/working/{NOTEBOOK}-{ATTEMPT}-evidence.zip"
+files, hits = write_redacted_archive(ATTEMPT_DIR, archive)
+print("evidence archive:", archive, os.path.getsize(archive), "bytes,", files, "files, redactions:", hits, flush=True)
+print(json.dumps({k: {"status": v["status"], "reason": v["reason"]} for k, v in RESULTS.items()}, indent=1), flush=True)"""
+
+
+def nb_03() -> list[dict]:
+    n = "03_enigma_stokastisk_build5_aws_integration"
+    base_json = json.dumps(BASELINE, sort_keys=True, separators=(",", ":"))
+    baseline = sub(NB03_BASELINE, BASELINE_JSON=repr(base_json), BASELINE_SHA=BASELINE["manifest_sha256"], SHA=WHEEL_SHA256, SIZE=str(WHEEL_SIZE), MODEL=MODEL)
+    capability = sub(NB03_CAPABILITY, AWSRT=AWS_RUNTIME_URL, AWSPROD=AWS_RUNTIME_PROD_URL, API=API_URL, DP_STAGING=DATA_PLANES["aws-staging"],
+                     DP_PROD=DATA_PLANES["aws-production"], DP_RAILWAY=DATA_PLANES["railway-comparison"])
+    full_md = ("## 03-8e. Full connector with one real Playground inference (600 s)\nStart this cell, wait for `stage_full` to begin, then submit ONE prompt:\n\n"
+               "* **aws-staging** (isolated staging data): on your computer run `AWS_PROFILE=enigma-deployer python3.13 scripts/aws_staging_runtime.py submit` "
+               "in the Enigma repository. It submits a Playground job to the staging runtime, waits for this GPU to complete it and prints the reply "
+               "(`STAGING_PLAYGROUND_JOB_PASS`). The Railway web app does NOT show staging data.\n"
+               "* **aws-production** / **railway-comparison**: open https://enigma-web-production-8986d34a.up.railway.app/app/runtimes, select the real "
+               "runtime, open Playground and submit one prompt; confirm the streamed reply persisted in the UI.\n\n"
+               "PASS requires at least one completed job and no failed job.")
     return [
-        header("03. Enigma + Stokastisk build 5 integration (selectable runtime transport)", "**Prepared, not GPU-verified.** `RUNTIME_TRANSPORT` "
-               "(first code cell, fixed for the attempt): `railway` = the Railway FastAPI (today's verified production: Neon PostgreSQL + Neon Auth) or "
-               "`aws` = the optional AWS runtime endpoint (the same FastAPI app on Lambda; accepted only once it reports the production deployment). "
-               "Requires BOTH Kaggle Secrets, each validated independently before anything expensive; then a durable AWS diagnostic acknowledgement; "
-               "then capability EVIDENCE from the selected endpoint only (never a checkbox, never the other endpoint). Only then: immutable build 5, "
-               "real local Qwen inference, the reviewed connector in its own supervised subprocess, explicit intervals, a REQUIRED durable AWS marker "
-               "before every stage: offline NVML, offline vLLM metrics, registration, heartbeat, idle job polling, single telemetry upload, continuous "
-               "telemetry, full connector with one real Playground job "
-f"(required), then build-5-safe shutdown.\n\n{SECRETS_MD}", n),
+        header("03. Enigma + Stokastisk build 5: AWS runtime integration", "**Prepared; NOT yet executed end to end (no GPU or Playground acceptance "
+               "exists for this notebook).** `INTEGRATION_MODE` (first code cell, fixed for the attempt): `aws-staging` (default) = the AWS runtime "
+               "endpoint (the same FastAPI app on Lambda) on its ISOLATED staging table: STAGING acceptance only; `aws-production` = the AWS runtime "
+               "endpoint on production data: BLOCKED until the DynamoDB + Cognito production cutover (stops before any request or GPU work); "
+               "`railway-comparison` = Railway direct, only with `ALLOW_RAILWAY_COMPARISON = True`. In the AWS modes this notebook never contacts "
+               "Railway. Order: GPU environment guard; both credential preflights; a durable AWS diagnostic acknowledgement; the historical baseline "
+               "manifest (notebooks 01 + 02, digest-verified); the capability gate (HTTP, schema, deployment, durable evidence: four separate results); "
+               "real runtime authentication (read-only); a 90 s post-capability survival gate; then immutable build 5, real local Qwen inference, the "
+               "reviewed connector in its own supervised subprocess with explicit intervals, offline NVML and vLLM stages, registration, heartbeat, idle "
+               "job polling, single and continuous telemetry, the full connector with one real Playground job, build-5-safe shutdown and an OVERALL "
+               f"verdict (PASS / FAIL / INCONCLUSIVE / BLOCKED, with its scope).\n\n{SECRETS_MD} **aws-staging:** `ENIGMA_RUNTIME_TOKEN` must hold the "
+               "STAGING runtime token (the content of `.enigma-local/ENIGMA_STAGING_RUNTIME_TOKEN.txt`, created by `scripts/aws_staging_runtime.py "
+               "provision`); the production token is rejected by the staging endpoint before any GPU work.", n),
         prelude(n),
         code(GPU_HELPERS),
         code(sub(REMOTE, DIAG=DIAG_URL)),
-        md("## 03-0. Credential preflight (each re-runnable on its own; a diagnostic-key problem is never reported as a runtime-token problem)"),
-        code('refresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
-        code('refresh_credentials("ENIGMA_RUNTIME_TOKEN")\ncheck_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")   # format/type only; the live check is registration'),
-        md("## 03-1. Durable AWS acknowledgement before anything expensive"),
+        code(CAPABILITY),
+        md("## 03-0. GPU environment guard (local only)"),
+        code(NB03_ENV),
+        md("## 03-1. Credential preflight and a durable AWS acknowledgement (each credential cell re-runnable on its own)"),
+        code('require("environment")\nrefresh_credentials("ENIGMA_DIAG_KEY")\ncheck_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")'),
+        code('refresh_credentials("ENIGMA_RUNTIME_TOKEN")\ncheck_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")   # format/type only; '
+             'the live check is 03-4'),
         code(DIAG_PROBE),
-        md("## 03-2. Gates: baselines, then evidence of the AWS production cutover"),
-        code(gate),
-        code(prod_gate),
-        md("## 03a. Immutable build 5, server, local inference"),
-        code('require("runtime_capabilities")\nrcheck("remote_install_begin", "install_begin", stage="install", phase="before")\n'
-             + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SIZE=str(WHEEL_SIZE), KNOWN=json.dumps(KNOWN_REPLACEMENTS))),
-        code(sub(SERVER, MODEL=MODEL)),
-        code(LOCAL_INFERENCE),
-        md("## 03b. Reviewed connector, runtime credential getter, stage helper"),
+        md("## 03-2. Historical baseline evidence (manifest from the executed notebooks 01 and 02)"),
+        code(baseline),
+        md("## 03-3. Capability gate (selected endpoint only) · 03-4. real runtime authentication · 03-5. post-capability survival"),
+        code(capability),
+        code(NB03_IDENTITY),
+        code(NB03_SURVIVAL),
+        md("## 03-6. Immutable build 5 (exactly the notebook 02 workflow), server, real local inference"),
+        code('require("post_capability_survival")\nrcheck("remote_install_begin", "install_begin", stage="install", phase="before")\n'
+             + sub(INSTALL, WHEEL=WHEEL, SHA=WHEEL_SHA256, SIZE=str(WHEEL_SIZE), KNOWN=json.dumps(KNOWN_REPLACEMENTS))
+             + '\nrcheck("remote_install_end", "install_end", stage="install", phase="after", wheel_build=_build, wheel_sha256=WHEEL_SHA256)'),
+        code('require("install")\nrcheck("remote_server_begin", "server_start_begin_remote", stage="server", phase="before")\n' + sub(SERVER, MODEL=MODEL)
+             + '\nrcheck("remote_server_started", "server_started_remote", stage="server", phase="after")'),
+        code(LOCAL_INFERENCE + '\nrcheck("remote_inference_done", "local_inference_done", stage="inference", phase="after")'),
+        md("## 03-7a. Reviewed connector, runtime credential getter, stage helper"),
         code(sub(CONNECTOR_FETCH, REV=ENIGMA_REV)),
-        code(TOKEN_GETTER),
-        code(helper),
-        md("## 03c. Offline stages"),
+        code(TOKEN_GETTER.replace('assert API_URL == ENDPOINTS[RUNTIME_TRANSPORT], "transport changed mid-attempt"     # selected by the capability gate; '
+                                  'never switched', 'assert API_URL == MODES[INTEGRATION_MODE]["url"], "transport changed mid-attempt"     # selected by the '
+                                  'capability gate; never switched')),
+        code(NB03_HELPER),
+        md("## 03-7b. Offline stages (no Enigma request during the measured intervals)"),
         code('_ = stage("nvml", duration=120)'),
         code('_ = stage("vllm")'),
-        md("## 03d. Cloud stages"),
-        code(cloud_gate),
-        code('require("cloud_gate")\n_ = stage("register")'),
+        md("## 03-8. Cloud stages (selected endpoint only)"),
+        code(NB03_CLOUD_GATE),
+        code('_ = stage("register")'),
         code('_ = stage("heartbeat")'),
         code('_ = stage("jobs")'),
         code('_ = stage("upload-once")'),
         code('_ = stage("telemetry")'),
-        md("## 03e. Full connector with one real Playground inference (600 s)\nStart the cell, then open "
-           "https://enigma-web-production-8986d34a.up.railway.app/app/runtimes, select the real runtime, open Playground and submit one prompt. "
-           "PASS requires at least one completed job and no failed job; confirm the reply persisted in the UI."),
+        md(full_md),
         code('_ = stage("full", duration=600, poll_s=15)'),
-        md("## 03f. Build-5-safe shutdown"),
-        code(shutdown),
-        md("## Evidence export (local, redacted)"),
-        code(EXPORT),
+        md("## 03-9. Build-5-safe shutdown"),
+        code(NB03_SHUTDOWN),
+        md("## 03-10. Overall acceptance (run it last, also after a stop)"),
+        code(NB03_OVERALL),
+        md("## Evidence export (one compact, redacted archive)"),
+        code(sub(NB03_EXPORT, SHA=WHEEL_SHA256, REV=ENIGMA_REV)),
     ]
 
 

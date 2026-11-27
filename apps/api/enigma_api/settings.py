@@ -75,6 +75,21 @@ class Settings(BaseSettings):
         return self.deployment or ("production" if self.is_production else self.env)
 
     @property
+    def data_plane(self) -> str:
+        """Public, NON-secret fingerprint of the data store this deployment reads and writes (no host, user, password or table name is exposed).
+        Two deployments report the same value only if they share one authoritative store; notebook 03 compares it with the expected value."""
+        import hashlib
+        from urllib.parse import urlsplit
+        if self.store == "dynamodb":
+            src = f"dynamodb:{self.ddb_table}"
+        elif self.store == "postgres":
+            u = urlsplit(self.db_dsn)
+            src = f"postgres:{u.hostname or ''}{u.path or ''}"
+        else:
+            return "memory"
+        return hashlib.sha256(src.encode()).hexdigest()[:16]
+
+    @property
     def is_production(self) -> bool:
         return self.env == "production" or self.on_railway
 

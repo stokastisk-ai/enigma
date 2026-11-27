@@ -95,27 +95,32 @@ def test_notebook_02_never_contacts_enigma():
 
 def test_notebook_03_is_gated_supervised_ordered_and_requires_a_real_job():
     text = "\n".join(code(N3))
-    assert "BASELINES_PASSED = False" in text and "ALLOW_CLOUD_CONNECTION = False" in text
+    assert "BASELINES_PASSED" not in text and "ALLOW_CLOUD_CONNECTION" not in text                    # evidence gates, never operator checkboxes
     assert [m.group(1) for m in re.finditer(r'stage\("([a-z-]+)"', text)] == ["nvml", "vllm", "register", "heartbeat", "jobs", "upload-once", "telemetry", "full"]
     assert '(stats.get("jobs_done") or 0) >= 1' in text and "run_stage(" in text and "serverctl.safe_stop(server)" in text
     assert '"--gpu-interval", "1.0", "--vllm-interval", "2.0", "--upload-interval", "5.0"' in text
     assert gen.ENIGMA_REV in text
-    order = [text.index(k) for k in ('check_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")', 'check_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")',
-                                     "dup = resubmit_last()", 'verdict("runtime_capabilities"', "urllib.request.urlopen(WHEEL_URL")]
+    order = [text.index(k) for k in ('verdict("environment"', 'check_credential("ENIGMA_DIAG_KEY", "diag_key_preflight")',
+                                     'check_credential("ENIGMA_RUNTIME_TOKEN", "runtime_token_preflight")', "dup = resubmit_last()",
+                                     'verdict("baseline_manifest"', 'verdict("runtime_capabilities", "PASS" if ok', 'verdict("runtime_identity", "PASS"',
+                                     'observe("post_capability_survival"', "urllib.request.urlopen(WHEEL_URL", "server.start_and_wait", 'stage("nvml"',
+                                     'verdict("cloud_gate"', 'stage("register")', 'stage("full"', "serverctl.safe_stop(server)", 'print(f"VERDICT overall')]
     assert order == sorted(order)
-    assert 'rcheck(f"stage_{name}_marker"' in text and 'get_credential("ENIGMA_RUNTIME_TOKEN")' in text
+    assert 'rcheck(f"stage_{name}_marker"' in text and 'verdict(f"stage_{name}_evidence"' in text and 'get_credential("ENIGMA_RUNTIME_TOKEN")' in text
+    assert "Prepared; NOT yet executed end to end" in "".join(json.loads((DIR / f"{N3}.ipynb").read_text())["cells"][0]["source"])
 
 
-def test_notebook_03_transport_is_fixed_and_only_the_selected_endpoint_is_probed():
-    assert 'RUNTIME_TRANSPORT = "railway"' in code(N3)[0]
-    gate = next(c for c in code(N3) if 'verdict("runtime_capabilities"' in c)
-    assert 'API_URL = ENDPOINTS[RUNTIME_TRANSPORT]' in gate and 'API_URL + "/api/v1/health"' in gate and gate.count("urlopen(") == 1
-    assert 'deployment == "production"' in gate and 'store == "dynamodb" and auth == "cognito"' in gate       # aws only once it IS production
-    assert gen.API_URL in gate and gen.AWS_RUNTIME_URL in gate
+def test_notebook_03_defaults_to_aws_and_never_contacts_railway_in_the_aws_modes():
+    first = code(N3)[0]
+    assert 'INTEGRATION_MODE = "aws-staging"' in first and "ALLOW_RAILWAY_COMPARISON = False" in first
+    assert 'RUNTIME_TRANSPORT = {"aws-staging": "aws", "aws-production": "aws", "railway-comparison": "railway"}[INTEGRATION_MODE]' in first
+    gate = next(c for c in code(N3) if 'verdict("runtime_capabilities", "PASS" if ok' in c)
+    assert gate.count("probe_health(") == 1 and "urlopen(" not in gate                                   # one hardened probe of the selected URL
+    assert 'API_URL = MODES[INTEGRATION_MODE]["url"]' in gate and gen.AWS_RUNTIME_URL in gate and gen.API_URL in gate
     text = "\n".join(code(N3))
-    assert 'assert API_URL == ENDPOINTS[RUNTIME_TRANSPORT], "transport changed mid-attempt"' in text
-    assert "api_url=API_URL if cloud" in text                                                                  # every stage uses the ONE selected URL
-    assert "fallback" not in text.lower().replace("never falls back", "").replace("fallen back", "")
+    assert text.count(gen.API_URL) == 1                                                                 # the Railway URL appears ONLY in the comparison mode
+    assert 'assert API_URL == MODES[INTEGRATION_MODE]["url"], "transport changed mid-attempt"' in text and "api_url=API_URL if cloud" in text
+    assert "fallback" not in text.lower().replace("never falls back", "").replace("fallen back", "").replace("no fallback", "")
 
 
 @pytest.mark.parametrize("name", [N1, N2, N3])
