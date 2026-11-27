@@ -143,7 +143,7 @@ _TRANSIENT_HTTP = {429, 500, 502, 503, 504}
 _TRANSIENT_CODES = {"DIAGNOSTIC_NETWORK_TIMEOUT", "DIAGNOSTIC_CONNECTION_ERROR"}
 REMOTE_ENABLED = True                                  # notebook 02 standalone mode turns this off: then no secret is read and nothing is sent
 _REMOTE_FIELDS = {"stage", "phase", "http", "latency_s", "target", "exc", "exit_code", "signal", "last_ok", "verdict", "note", "gpu_count",
-                  "gpu_mem_used_mib", "gpu_util_pct", "wheel_build", "wheel_sha256", "artifact"}
+                  "gpu_mem_used_mib", "gpu_util_pct", "wheel_build", "wheel_sha256", "artifact", "offset_s", "child_pid", "child_exit", "outcome"}
 
 
 class DiagResult(dict):
@@ -251,7 +251,8 @@ def _event(name, rec, fields, seq):
     ev = {"attempt": ATTEMPT, "nb": NOTEBOOK, "seq": seq, "marker": name, "utc": rec["utc"], "t": rec["t"], "experiment": EXPERIMENT,
           "pid": rec["pid"], "pgid": rec["pgid"], "sid": rec["sid"], "mem_available_mib": rec.get("memavailable_mib"),
           "cgroup_current_mib": rec.get("cgroup_current_mib"), "cgroup_max_mib": rec.get("cgroup_max_mib"),
-          "oom_kill": rec.get("cgroup_events", {}).get("oom_kill"), "vm_uptime_s": rec.get("vm_uptime_s")}
+          "oom_kill": rec.get("cgroup_events", {}).get("oom_kill"), "vm_uptime_s": rec.get("vm_uptime_s"),
+          "oom_state": "available" if "oom_kill" in rec.get("cgroup_events", {}) else "unavailable", "transport": globals().get("RUNTIME_TRANSPORT")}
     ev.update({k: v for k, v in fields.items() if k in _REMOTE_FIELDS and v is not None})
     return {k: v for k, v in ev.items() if v is not None}
 

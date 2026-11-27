@@ -111,6 +111,8 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
 
     @app.get("/api/v1/health", tags=["meta"])
     def health():
-        return {"ok": True, "version": __version__, "store": s.store, "auth": s.auth_provider}   # public, non-secret: lets the Kaggle notebook 03 gate verify the cutover
+        # Liveness only (no database round trip; readiness is the secret-protected /api/v1/admin/ready). Public, non-secret capability metadata:
+        # notebook 03 checks store + auth + deployment of the SELECTED runtime endpoint before any GPU work.
+        return {"ok": True, "version": __version__, "store": s.store, "auth": s.auth_provider, "deployment": s.deployment_label}
 
     return app
