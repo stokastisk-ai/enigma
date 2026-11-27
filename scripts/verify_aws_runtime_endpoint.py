@@ -71,6 +71,8 @@ def main() -> int:
     R["health"] = {"http": s, "latency_s": lat, **(h or {})}
     gpus = [{"index": 0, "uuid": "GPU-MOCK-0", "name": "MOCK T4", "memory_total_mib": 15360}]
     reg = {"connector_version": "verify", "is_mock": True, "served_model": "mock-model", "tp": 1, "pp": 1, "max_model_len": 2048, "gpus": gpus}
+    s, me, _ = call(url, "GET", "/api/v1/runtimes/me", None, alice.token)
+    R["runtimes_me"] = {"http": s, "same_runtime": (me or {}).get("runtime_id") == alice.runtime_id, "is_mock": (me or {}).get("is_mock")}
     s, b, lat = call(url, "POST", "/api/v1/runtimes/register", reg, alice.token)
     run_id = (b or {}).get("run_id")
     R["register"] = {"http": s, "latency_s": lat, "run_id": bool(run_id)}
@@ -108,16 +110,18 @@ def main() -> int:
                      "assistant_persisted": [m["role"] for m in msgs] == ["user", "assistant"] and msgs[-1]["content"] == "verified"}
     R["auth"] = {"bogus_runtime_key": call(url, "POST", "/api/v1/jobs/claim", {}, "enig_rt_abcd1234_" + "x" * 43)[0],
                  "diagnostic_shaped_key": call(url, "POST", "/api/v1/jobs/claim", {}, "edx_abcd1234_" + "x" * 43)[0],
-                 "no_key": call(url, "POST", "/api/v1/jobs/claim", {})[0]}
+                 "no_key": call(url, "POST", "/api/v1/jobs/claim", {})[0], "me_without_key": call(url, "GET", "/api/v1/runtimes/me")[0]}
     for t in (alice, bob):
         web.post(f"/api/v1/app/runtimes/{t.runtime_id}/revoke", headers=t.h)
     R["auth"]["after_revocation"] = call(url, "POST", "/api/v1/jobs/claim", {}, alice.token)[0]
-    ok = (R["health"]["http"] == 200 and R["health"].get("deployment") == "aws-staging-isolated" and R["register"]["http"] == 200
+    ok = (R["health"]["http"] == 200 and R["health"].get("deployment") == "aws-staging-isolated" and R["health"].get("api_contract") == 2
+          and R["health"].get("data_plane") == hashlib.sha256(f"dynamodb:{TABLE}".encode()).hexdigest()[:16]
+          and R["runtimes_me"] == {"http": 200, "same_runtime": True, "is_mock": True} and R["register"]["http"] == 200
           and R["heartbeat"]["http"] == 200 and R["telemetry"]["http"] == 200 and R["telemetry"]["replay_duplicate"] is True
           and R["claim"]["same_job"] and R["claim"]["second_claim_empty"] and R["claim"]["other_tenant_empty"] and R["events"]["accepted"] == 2
           and R["events"]["duplicates"] == 1 and R["complete"]["http"] == 200 and R["complete"]["replay_idempotent"] is True
           and R["complete"]["conflict_http"] == 409 and R["complete"]["other_tenant_http"] == 404 and R["complete"]["assistant_persisted"]
-          and R["auth"] == {"bogus_runtime_key": 401, "diagnostic_shaped_key": 401, "no_key": 401, "after_revocation": 401})
+          and R["auth"] == {"bogus_runtime_key": 401, "diagnostic_shaped_key": 401, "no_key": 401, "me_without_key": 401, "after_revocation": 401})
     R["VERDICT"] = "VERIFIED (isolated staging contract; not production, not inference)" if ok else "FAILED"
     out = json.dumps(R, indent=1, default=str)
     assert alice.token not in out and bob.token not in out

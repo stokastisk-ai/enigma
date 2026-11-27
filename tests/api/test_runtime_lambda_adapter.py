@@ -86,6 +86,34 @@ def test_health_reports_capabilities_and_an_honest_deployment_label(app):
     assert h["ok"] and h["deployment"] == "aws-staging-isolated" and h["store"] in ("memory", "dynamodb") and "auth" in h
 
 
+def test_health_data_plane_is_a_non_secret_fingerprint_and_contract_is_versioned(app):
+    import hashlib
+    h = LambdaClient(app).get("/api/v1/health").json()
+    assert h["api_contract"] == 2
+    if h["store"] == "dynamodb":
+        assert h["data_plane"] == hashlib.sha256(b"dynamodb:enigma-rt-staging").hexdigest()[:16] and "enigma-rt-staging" not in json.dumps(h)
+    else:
+        assert h["data_plane"] == "memory"
+
+
+def test_postgres_data_plane_never_exposes_credentials():
+    s = Settings(env="test", store="postgres", db_dsn="postgresql://user:synthetic-pw@db.invalid/neondb?sslmode=verify-full")
+    assert len(s.data_plane) == 16 and "synthetic-pw" not in s.data_plane and s.data_plane != Settings(env="test", store="dynamodb", ddb_table="t").data_plane
+
+
+def test_runtimes_me_is_read_only_identity_for_the_presented_token(app):
+    web = TestClient(app, raise_server_exceptions=False)
+    alice = Tenant(web, "user_alice"); alice.create_runtime(is_mock=False)
+    lam = LambdaClient(app)
+    me = lam.get("/api/v1/runtimes/me", alice.rh)
+    assert me.status_code == 200 and me.json()["runtime_id"] == alice.runtime_id and me.json()["is_mock"] is False
+    assert me.json()["status"] == "never_connected"
+    assert lam.get("/api/v1/runtimes/me").status_code == 401
+    assert lam.get("/api/v1/runtimes/me", {"Authorization": "Bearer edx_abcd1234_" + "x" * 43}).status_code == 401
+    web.post(f"/api/v1/app/runtimes/{alice.runtime_id}/revoke", headers=alice.h)
+    assert lam.get("/api/v1/runtimes/me", alice.rh).status_code == 401
+
+
 def test_full_runtime_contract_through_the_lambda_adapter(app):
     web = TestClient(app, raise_server_exceptions=False)             # the web side (users) may use either transport: it is the same app and store
     alice = Tenant(web, "user_alice")

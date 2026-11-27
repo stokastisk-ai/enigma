@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import __version__
+
+API_CONTRACT = 2      # runtime-plane contract: 2 = register/heartbeat/telemetry/claim/events/complete/fail/ack-cancel/status + GET /runtimes/me
 from .deps import AppState
 from .errors import install_error_handlers
 from .realtime import NullBroadcaster
@@ -113,6 +115,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, bro
     def health():
         # Liveness only (no database round trip; readiness is the secret-protected /api/v1/admin/ready). Public, non-secret capability metadata:
         # notebook 03 checks store + auth + deployment of the SELECTED runtime endpoint before any GPU work.
-        return {"ok": True, "version": __version__, "store": s.store, "auth": s.auth_provider, "deployment": s.deployment_label}
+        return {"ok": True, "version": __version__, "api_contract": API_CONTRACT, "store": s.store, "auth": s.auth_provider,
+                "deployment": s.deployment_label, "data_plane": s.data_plane}
 
     return app
